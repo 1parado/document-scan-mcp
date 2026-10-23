@@ -482,8 +482,8 @@ if __name__ == "__main__":
     # purge would then never run. Price: that download is cut off at the timeout.
     uvicorn.run(
         app,
-        host="0.0.0.0",
-        port=8765,
+        host=os.environ.get("SCAN_HOST", "0.0.0.0"),
+        port=int(os.environ.get("SCAN_PORT", "8765")),
         reload=False,
         timeout_graceful_shutdown=int(os.environ.get("SCAN_SHUTDOWN_TIMEOUT", "5")),
     )
