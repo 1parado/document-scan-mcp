@@ -12,25 +12,26 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import cv2
-
-from pipeline import process_images_to_pdf, process_one_image
+from pipeline import process_images_to_pdf, scan_file
 
 
 def cmd_scan(args: argparse.Namespace) -> None:
-    src = Path(args.image)
-    out = Path(args.out) if args.out else src.with_name(f"{src.stem}_scanned{src.suffix}")
-    result = process_one_image(src, mode=args.mode, auto_crop=not args.no_crop)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(out), result)
-    print(f"Saved: {out.resolve()}")
+    src = Path(args.image).expanduser()
+    if not src.exists():
+        raise SystemExit(f"Image not found: {src}")
+    out = Path(args.out).expanduser() if args.out else None
+    result = scan_file(src, out, mode=args.mode, auto_crop=not args.no_crop)
+    print(f"Saved: {result.resolve()}")
 
 
 def cmd_pdf(args: argparse.Namespace) -> None:
-    out = Path(args.out)
+    paths = [Path(p).expanduser() for p in args.images]
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        raise SystemExit("Image not found: " + ", ".join(str(m) for m in missing))
     result = process_images_to_pdf(
-        args.images,
-        out,
+        paths,
+        Path(args.out).expanduser(),
         mode=args.mode,
         auto_crop=not args.no_crop,
     )

@@ -4,6 +4,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+MODES = ("color", "gray", "bw")
+
 
 def remove_shadow(bgr: np.ndarray) -> np.ndarray:
     """Normalize background to reduce uneven lighting / shadows."""
@@ -29,6 +31,9 @@ def enhance_document(bgr: np.ndarray, mode: str = "color") -> np.ndarray:
       - gray  : grayscale + CLAHE contrast
       - bw    : adaptive threshold (classic scan look)
     """
+    if mode not in MODES:
+        raise ValueError(f"Unknown mode {mode!r}; expected one of {', '.join(MODES)}")
+
     cleaned = remove_shadow(bgr)
 
     if mode == "color":

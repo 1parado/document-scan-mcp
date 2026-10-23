@@ -1,4 +1,6 @@
-mcp>=1.0.0
+# mcp 2.x renamed FastMCP to MCPServer and dropped mcp.server.fastmcp, so an
+# unpinned >=1.0.0 install breaks server.py on import.
+mcp>=1.0,<2
 opencv-python-headless>=4.8.0
 numpy>=1.24,<2
 img2pdf>=0.5.1

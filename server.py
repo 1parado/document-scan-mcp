@@ -9,20 +9,38 @@ Tools:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
-import cv2
 from mcp.server.fastmcp import FastMCP
 
-from pipeline import process_images_to_pdf, process_one_image
+from pipeline import process_images_to_pdf, scan_file
+
+Mode = Literal["color", "gray", "bw"]
 
 mcp = FastMCP("document-scan")
+
+
+def _scan(
+    image_path: str,
+    output_path: str | None,
+    mode: str,
+    auto_crop: bool,
+) -> str:
+    src = Path(image_path).expanduser().resolve()
+    if not src.exists():
+        raise FileNotFoundError(f"Image not found: {src}")
+
+    out = Path(output_path).expanduser().resolve() if output_path else None
+    # scan_file picks "<stem>_scanned<suffix>" when out is None and raises if
+    # the write fails, so the returned path always exists.
+    return str(scan_file(src, out, mode=mode, auto_crop=auto_crop).resolve())
 
 
 @mcp.tool()
 def scan_image(
     image_path: str,
     output_path: str | None = None,
-    mode: str = "color",
+    mode: Mode = "color",
     auto_crop: bool = True,
 ) -> str:
     """
@@ -38,26 +56,14 @@ def scan_image(
     Returns:
         Absolute path of the processed image.
     """
-    src = Path(image_path).expanduser().resolve()
-    if not src.exists():
-        raise FileNotFoundError(f"Image not found: {src}")
-
-    if output_path is None:
-        out = src.with_name(f"{src.stem}_scanned{src.suffix}")
-    else:
-        out = Path(output_path).expanduser().resolve()
-
-    result = process_one_image(src, mode=mode, auto_crop=auto_crop)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(out), result)
-    return str(out)
+    return _scan(image_path, output_path, mode, auto_crop)
 
 
 @mcp.tool()
 def scan_images_to_pdf(
     image_paths: list[str],
     output_pdf: str,
-    mode: str = "color",
+    mode: Mode = "color",
     auto_crop: bool = True,
 ) -> str:
     """
@@ -87,13 +93,13 @@ def scan_images_to_pdf(
 def enhance_only(
     image_path: str,
     output_path: str | None = None,
-    mode: str = "bw",
+    mode: Mode = "bw",
 ) -> str:
     """
     Only enhance / binarize an image (no edge detection or perspective warp).
     Useful when the photo is already cropped.
     """
-    return scan_image(image_path, output_path, mode=mode, auto_crop=False)
+    return _scan(image_path, output_path, mode, auto_crop=False)
 
 
 if __name__ == "__main__":

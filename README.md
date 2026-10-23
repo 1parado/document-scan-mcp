@@ -40,6 +40,7 @@ Open http://127.0.0.1:8765
 - Mode: color / gray / bw  
 - Smart crop (with margin protection) + optional A4 unify  
 - Preview pages and download PDF  
+- Limits: 40 pages and 40 MB per image (tune `MAX_PAGES` / `MAX_UPLOAD_BYTES` in [web/app.py](file:///E:/cs扫描王/document-scan-mcp/web/app.py))
 
 ## MCP server
 
@@ -83,6 +84,7 @@ document-scan-mcp/
 │   ├── detect.py      # Edge + corners
 │   ├── warp.py        # Perspective transform
 │   ├── enhance.py     # Shadow removal + contrast / binarize
+│   ├── imio.py        # Unicode-safe image read/write
 │   └── pdf.py         # Images → PDF
 └── requirements.txt
 ```

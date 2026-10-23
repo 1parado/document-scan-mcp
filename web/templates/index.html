@@ -137,6 +137,11 @@
       gap: 10px;
       flex-wrap: wrap;
       justify-content: center;
+      /* The transparent <input> above covers the whole zone; lifting the strip
+         one level makes thumbnails clickable while the padding around them
+         still opens the file picker. */
+      position: relative;
+      z-index: 1;
     }
 
     .drop.has-files .file-list { display: flex; }
@@ -149,6 +154,7 @@
       border-radius: 8px;
       border: 1px solid var(--border);
       background: #f3f4f6;
+      cursor: zoom-in;
     }
 
     .thumb-wrap {
@@ -364,6 +370,7 @@
       border: 1px solid var(--border);
       background: #fff;
       box-shadow: 0 2px 8px rgba(0,0,0,.04);
+      cursor: zoom-in;
     }
 
     .result-actions {
@@ -384,6 +391,97 @@
 
     .btn-download:hover {
       background: #047857;
+    }
+
+    #modeBadge {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .pdf-view {
+      display: block;
+      width: 100%;
+      height: 70vh;
+      margin-top: 4px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #f3f4f6;
+    }
+
+    .pdf-view[hidden] { display: none; }
+
+    /* Image preview overlay */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 84px;
+      background: rgba(15, 18, 25, .86);
+    }
+
+    .lightbox.show { display: flex; }
+
+    .lb-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      max-height: 100%;
+    }
+
+    .lb-stage img {
+      max-width: 100%;
+      max-height: calc(100vh - 170px);
+      object-fit: contain;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 16px 56px rgba(0,0,0,.5);
+    }
+
+    .lb-stage figcaption {
+      color: #d1d5db;
+      font-size: 0.85rem;
+    }
+
+    .lb-btn {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 46px;
+      height: 68px;
+      border: none;
+      border-radius: 10px;
+      background: rgba(255,255,255,.12);
+      color: #fff;
+      font-size: 26px;
+      line-height: 1;
+      cursor: pointer;
+      transition: background .12s;
+    }
+
+    .lb-btn:hover { background: rgba(255,255,255,.26); }
+    .lb-btn[hidden] { display: none; }
+    .lb-prev { left: 18px; }
+    .lb-next { right: 18px; }
+
+    .lb-close {
+      top: 18px;
+      right: 18px;
+      transform: none;
+      width: 40px;
+      height: 40px;
+      font-size: 17px;
+    }
+
+    @media (max-width: 560px) {
+      .lightbox { padding: 56px 10px; }
+      .lb-btn { width: 36px; height: 54px; font-size: 22px; }
+      .lb-prev { left: 8px; }
+      .lb-next { right: 8px; }
     }
 
     footer {
@@ -426,7 +524,7 @@
         <div class="drop-hint">
           <div class="drop-icon">⬆️</div>
           <h2>拖放图片到这里</h2>
-          <p>或点击选择 · 支持多张 · JPG / PNG / WEBP</p>
+          <p>或点击选择 · Ctrl+V 粘贴截图 · 可分多次添加 · JPG / PNG / WEBP</p>
         </div>
         <div class="file-list" id="fileList"></div>
       </div>
@@ -464,18 +562,30 @@
 
     <div class="result" id="result">
       <div class="card">
-        <h3>处理完成 <span class="badge" id="pageBadge">0 页</span></h3>
+        <h3>处理完成 <span class="badge" id="pageBadge">0 页</span><span class="badge" id="modeBadge"></span></h3>
         <div class="preview-row" id="previewRow"></div>
         <div class="result-actions">
           <a class="btn btn-download" id="btnDownload" href="#" download>
             ↓ 下载 PDF
           </a>
+          <button type="button" class="btn btn-ghost" id="btnPdf">预览 PDF</button>
           <button class="btn btn-ghost" id="btnAgain">继续扫描</button>
         </div>
+        <iframe class="pdf-view" id="pdfView" title="PDF 预览" hidden></iframe>
       </div>
     </div>
 
     <footer>100% 本地处理 · 无上传云端 · Document Scan MCP</footer>
+  </div>
+
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="图片预览">
+    <button type="button" class="lb-btn lb-close" id="lbClose" aria-label="关闭预览">✕</button>
+    <button type="button" class="lb-btn lb-prev" id="lbPrev" aria-label="上一页">‹</button>
+    <figure class="lb-stage">
+      <img id="lbImg" alt="" />
+      <figcaption id="lbCap"></figcaption>
+    </figure>
+    <button type="button" class="lb-btn lb-next" id="lbNext" aria-label="下一页">›</button>
   </div>
 
   <script>
@@ -490,9 +600,18 @@
     const btnDownload = document.getElementById("btnDownload");
     const pageBadge = document.getElementById("pageBadge");
     const modeSeg = document.getElementById("modeSeg");
+    const modeBadge = document.getElementById("modeBadge");
+    const btnPdf = document.getElementById("btnPdf");
+    const pdfView = document.getElementById("pdfView");
+    const lightbox = document.getElementById("lightbox");
+    const lbImg = document.getElementById("lbImg");
+    const lbCap = document.getElementById("lbCap");
+    const lbPrev = document.getElementById("lbPrev");
+    const lbNext = document.getElementById("lbNext");
 
-    let selectedFiles = [];
+    let selected = []; // {file, url} — append-only until a page is removed
     let mode = "color";
+    let busy = false;
 
     modeSeg.querySelectorAll("button").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -502,24 +621,22 @@
       });
     });
 
-    function setFiles(files) {
-      selectedFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    function setStatus(text, kind) {
+      statusEl.className = "status" + (kind ? " " + kind : "");
+      statusEl.textContent = text;
+    }
+
+    function render() {
       fileList.innerHTML = "";
-      if (selectedFiles.length === 0) {
-        dropzone.classList.remove("has-files");
-        btnScan.disabled = true;
-        btnClear.disabled = true;
-        return;
-      }
-      dropzone.classList.add("has-files");
-      btnScan.disabled = false;
-      btnClear.disabled = false;
-      selectedFiles.forEach((f, i) => {
+      selected.forEach((it, i) => {
         const wrap = document.createElement("div");
         wrap.className = "thumb-wrap";
         const img = document.createElement("img");
         img.className = "thumb";
-        img.src = URL.createObjectURL(f);
+        img.src = it.url;
+        img.alt = it.file.name;
+        img.title = "点击预览";
+        img.addEventListener("click", () => openLb(selected, i));
         const ord = document.createElement("span");
         ord.className = "ord";
         ord.textContent = i + 1;
@@ -527,6 +644,31 @@
         wrap.appendChild(ord);
         fileList.appendChild(wrap);
       });
+
+      const has = selected.length > 0;
+      dropzone.classList.toggle("has-files", has);
+      btnScan.disabled = busy || !has;
+      btnClear.disabled = busy || !has;
+      // Adding files must not overwrite "处理中…"/"完成" while a job is running.
+      if (!busy) setStatus(has ? `已选 ${selected.length} 张` : "");
+    }
+
+    function addFiles(fileListObj) {
+      let added = 0;
+      Array.from(fileListObj || []).forEach((f) => {
+        if (!f.type.startsWith("image/")) return;
+        selected.push({ file: f, url: URL.createObjectURL(f) });
+        added++;
+      });
+      render();
+      return added;
+    }
+
+    function clearAll() {
+      selected.forEach((it) => URL.revokeObjectURL(it.url));
+      selected = [];
+      fileInput.value = "";
+      render();
     }
 
     dropzone.addEventListener("dragover", (e) => {
@@ -537,18 +679,54 @@
     dropzone.addEventListener("drop", (e) => {
       e.preventDefault();
       dropzone.classList.remove("dragover");
-      if (e.dataTransfer.files?.length) setFiles(e.dataTransfer.files);
+      if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
     });
+
+    // The <input> is an overlay covering the whole drop zone, so OS drops land on
+    // it, not on the zone. Its native drop handling would fire "change" *and*
+    // let this event bubble to the zone listener — adding the same file twice.
+    // Cancelling the default here leaves exactly one path per drop.
+    fileInput.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.remove("dragover");
+      if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
+    });
+
     fileInput.addEventListener("change", () => {
-      if (fileInput.files?.length) setFiles(fileInput.files);
+      addFiles(fileInput.files);
+      // Reset so picking the same file again still fires change.
+      fileInput.value = "";
+    });
+
+    // Ctrl+V / Cmd+V anywhere on the page: screenshots and copied image files
+    // arrive as clipboard items, not as a drop or a file-picker result.
+    window.addEventListener("paste", (e) => {
+      const dt = e.clipboardData;
+      if (!dt) return;
+      const files = Array.from(dt.items)
+        .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+        .map((it) => {
+          const f = it.getAsFile();
+          if (!f) return null;
+          // A pasted screenshot has no usable name; keep it out of the PDF
+          // metadata and the error messages.
+          return f.name && f.name !== "image.png"
+            ? f
+            : new File([f], `clipboard_${Date.now()}.png`, { type: f.type });
+        })
+        .filter(Boolean);
+      if (!files.length) return;
+      e.preventDefault();
+      addFiles(files);
     });
 
     btnClear.addEventListener("click", () => {
-      fileInput.value = "";
-      setFiles([]);
+      clearAll();
       resultEl.classList.remove("show");
-      statusEl.textContent = "";
-      statusEl.className = "status";
+      hidePdf();
+      pdfUrl = "";
+      setStatus("");
     });
 
     document.getElementById("btnAgain").addEventListener("click", () => {
@@ -556,15 +734,99 @@
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
 
+    /* ---------- image preview overlay ---------- */
+
+    const MODE_LABELS = { color: "彩色", gray: "灰度", bw: "黑白" };
+
+    let lbList = [];
+    let lbIndex = 0;
+
+    function showLb() {
+      const it = lbList[lbIndex];
+      if (!it) return closeLb();
+      lbImg.src = it.url;
+      lbImg.alt = it.name || "预览";
+      lbCap.textContent =
+        (it.name ? it.name + " · " : "") + `第 ${lbIndex + 1} / ${lbList.length} 张`;
+      const many = lbList.length > 1;
+      lbPrev.hidden = !many;
+      lbNext.hidden = !many;
+    }
+
+    function openLb(list, i) {
+      // Snapshot the entries: the list may change while the overlay is open.
+      lbList = Array.from(list).map((it) => ({
+        url: it.url,
+        name: it.name || (it.file && it.file.name) || "",
+      }));
+      lbIndex = i;
+      lightbox.classList.add("show");
+      document.body.style.overflow = "hidden";
+      showLb();
+    }
+
+    function closeLb() {
+      lightbox.classList.remove("show");
+      lbImg.removeAttribute("src");
+      document.body.style.overflow = "";
+    }
+
+    function stepLb(d) {
+      if (lbList.length < 2) return;
+      lbIndex = (lbIndex + d + lbList.length) % lbList.length;
+      showLb();
+    }
+
+    document.getElementById("lbClose").addEventListener("click", closeLb);
+    lbPrev.addEventListener("click", () => stepLb(-1));
+    lbNext.addEventListener("click", () => stepLb(1));
+    lightbox.addEventListener("click", (e) => {
+      if (e.target === lightbox || e.target.classList.contains("lb-stage")) closeLb();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (!lightbox.classList.contains("show")) return;
+      if (e.key === "Escape") closeLb();
+      else if (e.key === "ArrowLeft") stepLb(-1);
+      else if (e.key === "ArrowRight") stepLb(1);
+    });
+
+    /* ---------- PDF preview ---------- */
+
+    let pdfUrl = "";
+
+    function hidePdf() {
+      pdfView.hidden = true;
+      pdfView.removeAttribute("src");
+      btnPdf.textContent = "预览 PDF";
+    }
+
+    btnPdf.addEventListener("click", () => {
+      if (!pdfUrl) return;
+      if (pdfView.hidden) {
+        // ?inline=1 suppresses Content-Disposition so the browser renders the
+        // PDF instead of downloading it.
+        pdfView.src = pdfUrl + "?inline=1";
+        pdfView.hidden = false;
+        btnPdf.textContent = "收起 PDF";
+      } else {
+        hidePdf();
+      }
+    });
+
     btnScan.addEventListener("click", async () => {
-      if (!selectedFiles.length) return;
+      if (!selected.length || busy) return;
+      busy = true;
       btnScan.disabled = true;
+      btnClear.disabled = true;
       statusEl.className = "status working";
       statusEl.innerHTML = '<span class="spinner"></span>处理中…';
       resultEl.classList.remove("show");
+      hidePdf();
+      pdfUrl = "";
 
       const fd = new FormData();
-      selectedFiles.forEach((f) => fd.append("files", f));
+      let outcome = null;
+      selected.forEach((it) => fd.append("files", it.file, it.file.name));
       fd.append("mode", mode);
       fd.append("auto_crop", document.getElementById("autoCrop").checked ? "true" : "false");
       fd.append("unify_a4", document.getElementById("unifyA4").checked ? "true" : "false");
@@ -575,24 +837,35 @@
         if (!res.ok) throw new Error(data.error || "处理失败");
 
         previewRow.innerHTML = "";
-        (data.previews || []).forEach((url) => {
+        const scanned = (data.previews || []).map((url, i) => ({
+          url,
+          name: `扫描结果 第 ${i + 1} 页`,
+        }));
+        scanned.forEach((p, i) => {
           const img = document.createElement("img");
-          img.src = url;
-          img.alt = "preview";
+          img.src = p.url;
+          img.alt = p.name;
+          img.title = "点击预览";
+          img.addEventListener("click", () => openLb(scanned, i));
           previewRow.appendChild(img);
         });
         pageBadge.textContent = data.pages + " 页";
+        // Read the mode back from the response: it reports what the server
+        // actually applied, not what the buttons look like.
+        modeBadge.textContent = MODE_LABELS[data.mode] || data.mode || "";
+        pdfUrl = data.pdf_url;
         btnDownload.href = data.pdf_url;
         btnDownload.setAttribute("download", data.download_name || "scanned.pdf");
         resultEl.classList.add("show");
-        statusEl.className = "status ok";
-        statusEl.textContent = "完成";
+        outcome = ["完成", "ok"];
         resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
       } catch (err) {
-        statusEl.className = "status err";
-        statusEl.textContent = err.message || "出错了";
+        outcome = [err.message || "出错了", "err"];
       } finally {
-        btnScan.disabled = selectedFiles.length === 0;
+        busy = false;
+        // render() reports the list count; the job result takes the line after.
+        render();
+        if (outcome) setStatus(outcome[0], outcome[1]);
       }
     });
   </script>
