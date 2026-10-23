@@ -29,6 +29,7 @@ from pipeline import process_image, to_a4
 from pipeline.enhance import MODES
 from pipeline.imio import decode, imwrite
 from pipeline.pdf import images_to_pdf
+from pipeline.word2pdf import docx_to_pdf
 
 logger = logging.getLogger("document-scan.web")
 
@@ -223,6 +224,60 @@ def scan(
         logger.exception("scan job %s failed", job_id)
         return JSONResponse(
             {"error": "处理失败，请查看服务端日志", "job_id": job_id}, status_code=500
+        )
+    finally:
+        if not done:
+            _drop_job_dir(job_dir)
+
+
+@app.post("/api/word2pdf")
+def word_to_pdf(word: UploadFile = File(...)):
+    """Word → scan-styled PDF. One document per job; the scan-style processing
+    (grayscale enhancement + A4) matches the photo pipeline's output."""
+    job_id = uuid.uuid4().hex[:12]
+    job_dir = OUTPUT_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    done = False
+    try:
+        name = Path(word.filename or "document.docx").name
+        if not name.lower().endswith((".docx", ".doc")):
+            raise ScanError("请上传 .docx 或 .doc 文件", 422)
+
+        content = word.file.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise ScanError(
+                f"文件超过 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB 上限", 413
+            )
+
+        src = job_dir / "upload.docx"
+        src.write_bytes(content)
+        # Word COM needs a real extension to recognize the format; .doc uses
+        # the same export path.
+        if name.lower().endswith(".doc"):
+            src = job_dir / "upload.doc"
+            src.write_bytes(content)
+
+        pdf_name = f"scan_{job_id}.pdf"
+        docx_to_pdf(src, job_dir / pdf_name)
+        done = True
+
+        pages = max(1, len(list(job_dir.glob("page_*.pdf"))))
+        return {
+            "job_id": job_id,
+            "pages": pages,
+            "mode": "gray",
+            "a4": True,
+            "previews": [],
+            "pdf_url": f"/outputs/{job_id}/{pdf_name}",
+            "download_name": f"scanned_{Path(name).stem}_{job_id}.pdf",
+        }
+    except ScanError as e:
+        return JSONResponse({"error": e.message}, status_code=e.status_code)
+    except Exception:
+        logger.exception("word2pdf job %s failed", job_id)
+        return JSONResponse(
+            {"error": "Word 转换失败，请确认文件未损坏", "job_id": job_id}, status_code=500
         )
     finally:
         if not done:

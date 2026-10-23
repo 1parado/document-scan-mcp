@@ -235,6 +235,23 @@
 
     .thumb:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(33,38,35,.14); }
 
+    /* Word 文档卡片（无图片预览时） */
+    .thumb.doc-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      font-family: var(--mono);
+      font-size: .62rem;
+      letter-spacing: .1em;
+      cursor: default;
+    }
+
+    .thumb.doc-card:hover { transform: none; box-shadow: none; }
+
     .thumb-wrap .ord {
       position: absolute;
       top: -5px; left: -5px;
@@ -638,7 +655,7 @@
     <hr class="sep" />
 
     <div class="drop" id="dropzone">
-      <input type="file" id="fileInput" accept="image/*" multiple />
+      <input type="file" id="fileInput" accept="image/*,.docx,.doc" />
       <div class="drop-hint">
         <div class="drop-icon">
           <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
@@ -802,17 +819,32 @@
     function makeThumb(it, i) {
       const wrap = document.createElement("div");
       wrap.className = "thumb-wrap";
-      wrap.draggable = true;
+      wrap.draggable = !it.word;
       wrap.dataset.idx = i;
-      const img = document.createElement("img");
-      img.className = "thumb";
-      img.src = it.url;
-      img.alt = it.file.name;
-      img.title = "点击预览 · 拖动可调整顺序";
-      img.addEventListener("click", () => openLb(selected, [...fileList.children].indexOf(wrap)));
       const ord = document.createElement("span");
       ord.className = "ord";
       ord.textContent = i + 1;
+      let media;
+      if (it.word) {
+        // Word 文档卡片：没有 blob URL，用文档图标卡片代替图片缩略图。
+        media = document.createElement("div");
+        media.className = "thumb doc-card";
+        media.innerHTML =
+          '<svg width="22" height="22" viewBox="0 0 20 20" fill="none" aria-hidden="true">' +
+          '<path d="M5 2.5h7L15.5 6v11A1.5 1.5 0 0 1 14 18.5H5A1.5 1.5 0 0 1 3.5 17V4A1.5 1.5 0 0 1 5 2.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
+          '<path d="M12 2.5V6h3.5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
+          '<path d="M6.5 10h7M6.5 13h4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' +
+          '<span>DOC</span>';
+        media.title = "Word 文档 · 转为扫描 PDF";
+      } else {
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = it.url;
+        img.alt = it.file.name;
+        img.title = "点击预览 · 拖动可调整顺序";
+        img.addEventListener("click", () => openLb(selected, [...fileList.children].indexOf(wrap)));
+        media = img;
+      }
       const rm = document.createElement("button");
       rm.type = "button";
       rm.className = "rm";
@@ -821,11 +853,11 @@
       rm.textContent = "✕";
       rm.addEventListener("click", (e) => {
         e.stopPropagation();
-        URL.revokeObjectURL(it.url);
+        if (it.url) URL.revokeObjectURL(it.url);
         selected.splice(i, 1);
         render();
       });
-      wrap.appendChild(img);
+      wrap.appendChild(media);
       wrap.appendChild(ord);
       wrap.appendChild(rm);
       return wrap;
@@ -853,16 +885,28 @@
       btnScan.disabled = busy || !has;
       btnClear.disabled = busy || !has;
       // Adding files must not overwrite "处理中…"/"完成" while a job is running.
-      if (!busy) setStatus(has ? `已选 ${selected.length} 张` : "");
+      if (!busy) {
+        if (!has) setStatus("");
+        else if (selected[0]?.word) setStatus(`Word 文档：${selected[0].file.name}`);
+        else setStatus(`已选 ${selected.length} 张`);
+      }
     }
 
     function addFiles(listObj) {
       let added = 0;
       Array.from(listObj || []).forEach((f) => {
-        if (!f.type.startsWith("image/")) return;
+        const isWord = /\.(docx?|DOCX?)$/.test(f.name);
+        if (!f.type.startsWith("image/") && !isWord) return;
+        // Word 文档一次只能有一份，且与图片互斥：直接替换当前列表。
+        if (isWord) {
+          clearAll();
+          selected.push({ file: f, url: "", word: true });
+          render();
+          return added = 1;
+        }
         const it = { file: f, url: URL.createObjectURL(f) };
         selected.push(it);
-        // 增量插入：只对新增的缩略图做动画。
+        // 增量插入：只对新增的缩略图添加动画。
         const wrap = makeThumb(it, selected.length - 1);
         fileList.appendChild(wrap);
         added++;
@@ -1101,14 +1145,19 @@
       pdfUrl = "";
 
       const fd = new FormData();
+      const isWordJob = !!selected[0]?.word;
       let outcome = null;
-      selected.forEach((it) => fd.append("files", it.file, it.file.name));
-      fd.append("mode", mode);
-      fd.append("auto_crop", document.getElementById("autoCrop").checked ? "true" : "false");
-      fd.append("unify_a4", document.getElementById("unifyA4").checked ? "true" : "false");
+      if (isWordJob) {
+        fd.append("word", selected[0].file, selected[0].file.name);
+      } else {
+        selected.forEach((it) => fd.append("files", it.file, it.file.name));
+        fd.append("mode", mode);
+        fd.append("auto_crop", document.getElementById("autoCrop").checked ? "true" : "false");
+        fd.append("unify_a4", document.getElementById("unifyA4").checked ? "true" : "false");
+      }
 
       try {
-        const res = await fetch("/api/scan", { method: "POST", body: fd });
+        const res = await fetch(isWordJob ? "/api/word2pdf" : "/api/scan", { method: "POST", body: fd });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "处理失败");
 
@@ -1128,8 +1177,10 @@
         });
         pageBadge.textContent = data.pages + " 页";
         // Read the mode back from the response: it reports what the server
-        // actually applied, not what the buttons look like.
-        modeBadge.textContent = MODE_LABELS[data.mode] || data.mode || "";
+        // applied, not what the buttons look like. Word jobs return "gray".
+        modeBadge.textContent = isWordJob
+          ? "Word 转换"
+          : MODE_LABELS[data.mode] || data.mode || "";
         pdfUrl = data.pdf_url;
         btnDownload.href = data.pdf_url;
         btnDownload.setAttribute("download", data.download_name || "scanned.pdf");
