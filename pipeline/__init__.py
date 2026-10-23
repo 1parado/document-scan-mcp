@@ -35,19 +35,25 @@ def process_image(
     auto_crop: bool = True,
     margin_ratio: float = 0.08,
     skip_cover: float = 0.82,
+    crop_status: list | None = None,
 ) -> np.ndarray:
     """Enhance an already-decoded photo, warping it if a document quad is found.
 
     skip_cover: when the detected quad already covers this fraction of the
     frame, the photo is effectively a full-page shot and warping only adds
     distortion, so the original is kept.
+
+    crop_status: optional one-element list; set to "cropped" / "kept" /
+    "not_found" so callers can report what the detector actually did.
     """
     if mode not in MODES:
         raise ValueError(f"Unknown mode {mode!r}; expected one of {', '.join(MODES)}")
 
+    status = "kept" if not auto_crop else "not_found"
     if auto_crop:
         corners = find_document_corners(img)
         if corners is not None:
+            status = "kept"
             xs, ys = corners[:, 0], corners[:, 1]
             cover = ((xs.max() - xs.min()) * (ys.max() - ys.min())) / float(
                 img.shape[1] * img.shape[0]
@@ -56,6 +62,10 @@ def process_image(
                 img = four_point_transform(
                     img, expand_corners(corners, img.shape, margin_ratio)
                 )
+                status = "cropped"
+
+    if crop_status is not None:
+        crop_status.append(status)
 
     return enhance_document(img, mode=mode)
 
