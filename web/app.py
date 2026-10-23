@@ -29,7 +29,8 @@ from pipeline import process_image, to_a4
 from pipeline.enhance import MODES
 from pipeline.imio import decode, imwrite
 from pipeline.pdf import images_to_pdf
-from pipeline.word2pdf import docx_to_pdf
+from pipeline.pdf2scan import pdf_to_scanned_pdf
+from pipeline.word2pdf import docx_to_pdf, docx_to_pdf_with_previews
 
 logger = logging.getLogger("document-scan.web")
 
@@ -173,6 +174,7 @@ def scan(
         do_crop = _truthy(auto_crop)
         do_a4 = _truthy(unify_a4)
 
+        statuses: list[str] = []
         for i, uf in enumerate(files):
             # Reads one byte past the cap so an oversized body is detected
             # without ever buffering the whole upload.
@@ -187,10 +189,12 @@ def scan(
                 name = Path(uf.filename or "").name or f"第 {i + 1} 张"
                 raise ScanError(f"无法读取图片: {name}")
 
-            processed = process_image(img, mode=mode, auto_crop=do_crop)
+            page_status: list = []
+            processed = process_image(img, mode=mode, auto_crop=do_crop, crop_status=page_status)
             if do_a4:
                 processed = to_a4(processed)
             pages.append(processed)
+            statuses.append(page_status[0] if page_status else "kept")
 
             prev_name = f"preview_{i:03d}.jpg"
             h, w = processed.shape[:2]
@@ -212,6 +216,7 @@ def scan(
             "pages": len(pages),
             "mode": mode,
             "a4": do_a4,
+            "crop_status": statuses,
             "previews": previews,
             "pdf_url": f"/outputs/{job_id}/{pdf_name}",
             "download_name": f"scanned_{mode}_{len(pages)}p_{job_id}.pdf",
@@ -232,8 +237,7 @@ def scan(
 
 @app.post("/api/word2pdf")
 def word_to_pdf(word: UploadFile = File(...)):
-    """Word → scan-styled PDF. One document per job; the scan-style processing
-    (grayscale enhancement + A4) matches the photo pipeline's output."""
+    """Word → scan-styled PDF with per-page previews. One document per job."""
     job_id = uuid.uuid4().hex[:12]
     job_dir = OUTPUT_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -250,25 +254,26 @@ def word_to_pdf(word: UploadFile = File(...)):
                 f"文件超过 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB 上限", 413
             )
 
-        src = job_dir / "upload.docx"
+        ext = ".doc" if name.lower().endswith(".doc") else ".docx"
+        src = job_dir / f"upload{ext}"
         src.write_bytes(content)
-        # Word COM needs a real extension to recognize the format; .doc uses
-        # the same export path.
-        if name.lower().endswith(".doc"):
-            src = job_dir / "upload.doc"
-            src.write_bytes(content)
 
         pdf_name = f"scan_{job_id}.pdf"
-        docx_to_pdf(src, job_dir / pdf_name)
+        _, previews = docx_to_pdf_with_previews(src, job_dir / pdf_name)
         done = True
 
-        pages = max(1, len(list(job_dir.glob("page_*.pdf"))))
+        preview_urls = []
+        for i, small in enumerate(previews[:MAX_PAGES]):
+            prev_name = f"preview_{i:03d}.jpg"
+            imwrite(job_dir / prev_name, small, [cv2.IMWRITE_JPEG_QUALITY, 88])
+            preview_urls.append(f"/outputs/{job_id}/{prev_name}")
+
         return {
             "job_id": job_id,
-            "pages": pages,
+            "pages": len(previews),
             "mode": "gray",
             "a4": True,
-            "previews": [],
+            "previews": preview_urls,
             "pdf_url": f"/outputs/{job_id}/{pdf_name}",
             "download_name": f"scanned_{Path(name).stem}_{job_id}.pdf",
         }
@@ -278,6 +283,63 @@ def word_to_pdf(word: UploadFile = File(...)):
         logger.exception("word2pdf job %s failed", job_id)
         return JSONResponse(
             {"error": "Word 转换失败，请确认文件未损坏", "job_id": job_id}, status_code=500
+        )
+    finally:
+        if not done:
+            _drop_job_dir(job_dir)
+
+
+@app.post("/api/pdf2scan")
+def pdf_to_scan(pdf: UploadFile = File(...)):
+    """PDF → scan-styled PDF with per-page previews. One file per job."""
+    job_id = uuid.uuid4().hex[:12]
+    job_dir = OUTPUT_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    done = False
+    try:
+        name = Path(pdf.filename or "document.pdf").name
+        if not name.lower().endswith(".pdf"):
+            raise ScanError("请上传 .pdf 文件", 422)
+
+        content = pdf.file.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise ScanError(
+                f"文件超过 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB 上限", 413
+            )
+
+        src = job_dir / "upload.pdf"
+        src.write_bytes(content)
+
+        pdf_name = f"scan_{job_id}.pdf"
+        out, pages, previews = pdf_to_scanned_pdf(src, job_dir / pdf_name)
+        if not pages:
+            raise ScanError("PDF 没有可处理的页面", 422)
+        if len(pages) > MAX_PAGES:
+            raise ScanError(f"PDF 超过 {MAX_PAGES} 页上限", 413)
+        done = True
+
+        preview_urls = []
+        for i, small in enumerate(previews):
+            prev_name = f"preview_{i:03d}.jpg"
+            imwrite(job_dir / prev_name, small, [cv2.IMWRITE_JPEG_QUALITY, 88])
+            preview_urls.append(f"/outputs/{job_id}/{prev_name}")
+
+        return {
+            "job_id": job_id,
+            "pages": len(pages),
+            "mode": "gray",
+            "a4": True,
+            "previews": preview_urls,
+            "pdf_url": f"/outputs/{job_id}/{pdf_name}",
+            "download_name": f"scanned_{Path(name).stem}_{job_id}.pdf",
+        }
+    except ScanError as e:
+        return JSONResponse({"error": e.message}, status_code=e.status_code)
+    except Exception:
+        logger.exception("pdf2scan job %s failed", job_id)
+        return JSONResponse(
+            {"error": "PDF 转换失败，请确认文件未损坏", "job_id": job_id}, status_code=500
         )
     finally:
         if not done:

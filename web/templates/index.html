@@ -641,6 +641,7 @@
       </div>
       <div class="titles">
         <h1>Document Scan</h1>
+        <p>100% 本地处理 · 文件不上传云端</p>
       </div>
       <button type="button" class="settings-btn" id="btnSettings" aria-expanded="false" aria-label="展示更多" title="展示更多">
         <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
@@ -654,7 +655,7 @@
     <hr class="sep" />
 
     <div class="drop" id="dropzone">
-      <input type="file" id="fileInput" accept="image/*,.docx,.doc" />
+      <input type="file" id="fileInput" accept="image/*,.docx,.doc,.pdf" />
       <div class="drop-hint">
         <div class="drop-icon">
           <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
@@ -824,8 +825,8 @@
       ord.className = "ord";
       ord.textContent = i + 1;
       let media;
-      if (it.word) {
-        // Word 文档卡片：没有 blob URL，用文档图标卡片代替图片缩略图。
+      if (it.word || it.pdf) {
+        // Word / PDF 文档卡片：没有 blob URL，用文档图标卡片代替图片缩略图。
         media = document.createElement("div");
         media.className = "thumb doc-card";
         media.innerHTML =
@@ -833,8 +834,8 @@
           '<path d="M5 2.5h7L15.5 6v11A1.5 1.5 0 0 1 14 18.5H5A1.5 1.5 0 0 1 3.5 17V4A1.5 1.5 0 0 1 5 2.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
           '<path d="M12 2.5V6h3.5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
           '<path d="M6.5 10h7M6.5 13h4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' +
-          '<span>DOC</span>';
-        media.title = "Word 文档 · 转为扫描 PDF";
+          `<span>${it.word ? "DOC" : "PDF"}</span>`;
+        media.title = (it.word ? "Word 文档" : "PDF 文档") + " · 转为扫描 PDF";
       } else {
         const img = document.createElement("img");
         img.className = "thumb";
@@ -887,34 +888,44 @@
       if (!busy) {
         if (!has) setStatus("");
         else if (selected[0]?.word) setStatus(`Word 文档：${selected[0].file.name}`);
+        else if (selected[0]?.pdf) setStatus(`PDF 文档：${selected[0].file.name}`);
         else setStatus(`已选 ${selected.length} 张`);
       }
     }
 
     const isWordFile = (f) => /\.(docx?|DOCX?)$/.test(f.name);
+    const isPdfFile = (f) => /\.pdf$/i.test(f.name);
+    const isDocFile = (f) => isWordFile(f) || isPdfFile(f);
+    // 三类输入互斥：images / docx / pdf。kind 用作列表标识与端点选择。
+    const fileKind = (f) => (isWordFile(f) ? "word" : isPdfFile(f) ? "pdf" : "image");
 
     function addFiles(listObj) {
       const incoming = Array.from(listObj || []).filter(
-        (f) => f.type.startsWith("image/") || isWordFile(f)
+        (f) => f.type.startsWith("image/") || isDocFile(f)
       );
       if (!incoming.length) return 0;
 
-      const hasWord = selected[0]?.word;
-      const wordIncoming = incoming.find(isWordFile);
+      const currentKind = selected.length ? (selected[0].word ? "word" : selected[0].pdf ? "pdf" : "image") : null;
+      const incomingDoc = incoming.find(isDocFile);
+      const incomingKind = incomingDoc ? fileKind(incomingDoc) : "image";
 
       // 互斥：列表已有内容时，另一种类型直接拒绝并提醒；同类型照常追加。
-      if (hasWord && !wordIncoming) {
-        flashStatus("已有 Word 文档，请先移除后再上传图片", "err");
-        return 0;
-      }
-      if (!hasWord && selected.length && wordIncoming) {
-        flashStatus("已有图片，Word 文档不能与图片混传，请先清空", "err");
+      if (currentKind && incomingKind !== currentKind) {
+        const names = { word: "Word 文档", pdf: "PDF 文档", image: "图片" };
+        flashStatus(`已有${names[currentKind]}，${names[incomingKind]}不能与之混传，请先清空`, "err");
         return 0;
       }
 
-      if (wordIncoming) {
+      if (incomingDoc) {
+        // 文档一次一份：替换列表。
         clearAll();
-        selected.push({ file: wordIncoming, url: "", word: true });
+        const kind = fileKind(incomingDoc);
+        selected.push({
+          file: incomingDoc,
+          url: "",
+          word: kind === "word",
+          pdf: kind === "pdf",
+        });
         render();
         return 1;
       }
@@ -928,6 +939,14 @@
         fileList.appendChild(wrap);
         added++;
       });
+      if (added && selected.length === added) flashStatus(`已添加 ${added} 张`, "ok");
+      else if (added) flashStatus(`已添加 ${added} 张`);
+      // 接近页数上限时预警（上限 40 由服务端定）。
+      if (selected.length >= 35 && selected.length < 40) {
+        flashStatus(`已选 ${selected.length} 张，接近 40 页上限`, "err");
+      } else if (selected.length >= 40) {
+        flashStatus("已达 40 页上限，多余的图片会被服务端拒绝", "err");
+      }
       syncState();
       return added;
     }
@@ -1172,10 +1191,13 @@
       pdfUrl = "";
 
       const fd = new FormData();
-      const isWordJob = !!selected[0]?.word;
+      const kind = selected[0]?.word ? "word" : selected[0]?.pdf ? "pdf" : "image";
+      const endpoint = kind === "word" ? "/api/word2pdf" : kind === "pdf" ? "/api/pdf2scan" : "/api/scan";
       let outcome = null;
-      if (isWordJob) {
+      if (kind === "word") {
         fd.append("word", selected[0].file, selected[0].file.name);
+      } else if (kind === "pdf") {
+        fd.append("pdf", selected[0].file, selected[0].file.name);
       } else {
         selected.forEach((it) => fd.append("files", it.file, it.file.name));
         fd.append("mode", mode);
@@ -1184,7 +1206,7 @@
       }
 
       try {
-        const res = await fetch(isWordJob ? "/api/word2pdf" : "/api/scan", { method: "POST", body: fd });
+        const res = await fetch(endpoint, { method: "POST", body: fd });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "处理失败");
 
@@ -1204,10 +1226,18 @@
         });
         pageBadge.textContent = data.pages + " 页";
         // Read the mode back from the response: it reports what the server
-        // applied, not what the buttons look like. Word jobs return "gray".
-        modeBadge.textContent = isWordJob
-          ? "Word 转换"
-          : MODE_LABELS[data.mode] || data.mode || "";
+        // applied, not what the buttons look like. Document jobs return "gray".
+        modeBadge.textContent =
+          kind === "word" ? "Word 转换" : kind === "pdf" ? "PDF 转换" : MODE_LABELS[data.mode] || data.mode || "";
+        // 裁边反馈：只在有页未检测到边缘时提示，避免正常情况下的噪音。
+        if (Array.isArray(data.crop_status)) {
+          const misses = data.crop_status.filter((s) => s === "not_found").length;
+          if (misses === data.pages && data.pages > 0) {
+            flashStatus("未检测到文档边缘，已按原图处理", "err");
+          } else if (misses > 0) {
+            flashStatus(`${data.pages - misses}/${data.pages} 页已裁边，其余未检测到边缘`, "err");
+          }
+        }
         pdfUrl = data.pdf_url;
         btnDownload.href = data.pdf_url;
         btnDownload.setAttribute("download", data.download_name || "scanned.pdf");
