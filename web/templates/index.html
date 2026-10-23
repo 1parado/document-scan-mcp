@@ -743,6 +743,7 @@
           下载 PDF
         </a>
         <button type="button" class="btn btn-ghost" id="btnPdf">预览 PDF</button>
+        <button class="btn btn-ghost" id="btnRescan">用当前设置重扫</button>
         <button class="btn btn-ghost" id="btnAgain">继续扫描</button>
       </div>
       <iframe class="pdf-view" id="pdfView" title="PDF 预览" hidden></iframe>
@@ -894,6 +895,23 @@
     }
 
     const isWordFile = (f) => /\.(docx?|DOCX?)$/.test(f.name);
+
+    /* 离屏降采样：把大图缩成 240px 缩略图 blob，避免全分辨率解码卡主线程。 */
+    async function makeSmallThumb(file, maxDim = 240) {
+      try {
+        const bmp = await createImageBitmap(file);
+        const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+        const w = Math.max(1, Math.round(bmp.width * scale));
+        const h = Math.max(1, Math.round(bmp.height * scale));
+        const cv = new OffscreenCanvas(w, h);
+        cv.getContext("2d").drawImage(bmp, 0, 0, w, h);
+        bmp.close();
+        const blob = await cv.convertToBlob({ type: "image/jpeg", quality: 0.8 });
+        return URL.createObjectURL(blob);
+      } catch {
+        return ""; // 解码失败就保留原图 URL，行为同旧版
+      }
+    }
     const isPdfFile = (f) => /\.pdf$/i.test(f.name);
     const isDocFile = (f) => isWordFile(f) || isPdfFile(f);
     // 三类输入互斥：images / docx / pdf。kind 用作列表标识与端点选择。
@@ -934,6 +952,13 @@
       incoming.forEach((f) => {
         const it = { file: f, url: URL.createObjectURL(f) };
         selected.push(it);
+        // 缩略图不直接吃原图 blob（8MB 手机照解码慢、占内存），降采样到
+        // 240px 的 blob 再显示；lightbox 仍用原图 URL。
+        makeSmallThumb(f).then((smallUrl) => {
+          const img = fileList.children[selected.indexOf(it)]?.querySelector("img.thumb");
+          if (img && selected.includes(it)) img.src = smallUrl;
+          else URL.revokeObjectURL(smallUrl);
+        });
         // 增量插入：只对新增的缩略图添加动画。
         const wrap = makeThumb(it, selected.length - 1);
         fileList.appendChild(wrap);
@@ -1082,6 +1107,14 @@
       setStatus("");
     });
 
+    // 重扫：文件列表还在（btnAgain 之外的路径不清空 selected），换设置后
+    // 直接再跑一遍同一个 handler。
+    document.getElementById("btnRescan").addEventListener("click", () => {
+      if (busy || !selected.length) return;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      btnScan.click();
+    });
+
     document.getElementById("btnAgain").addEventListener("click", () => {
       btnClear.click();
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1190,60 +1223,118 @@
       hidePdf();
       pdfUrl = "";
 
-      const fd = new FormData();
       const kind = selected[0]?.word ? "word" : selected[0]?.pdf ? "pdf" : "image";
       const endpoint = kind === "word" ? "/api/word2pdf" : kind === "pdf" ? "/api/pdf2scan" : "/api/scan";
       let outcome = null;
-      if (kind === "word") {
-        fd.append("word", selected[0].file, selected[0].file.name);
-      } else if (kind === "pdf") {
-        fd.append("pdf", selected[0].file, selected[0].file.name);
-      } else {
-        selected.forEach((it) => fd.append("files", it.file, it.file.name));
-        fd.append("mode", mode);
-        fd.append("auto_crop", document.getElementById("autoCrop").checked ? "true" : "false");
-        fd.append("unify_a4", document.getElementById("unifyA4").checked ? "true" : "false");
-      }
 
       try {
-        const res = await fetch(endpoint, { method: "POST", body: fd });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "处理失败");
-
         previewRow.innerHTML = "";
-        const scanned = (data.previews || []).map((url, i) => ({
-          url,
-          name: `扫描结果 第 ${i + 1} 页`,
-        }));
-        scanned.forEach((p, i) => {
+        const scanned = [];
+
+        const appendPreview = (p) => {
+          scanned.push(p);
           const img = document.createElement("img");
           img.src = p.url;
           img.alt = p.name;
           img.title = "点击预览";
-          img.style.animationDelay = `${Math.min(i * 50, 400)}ms`;
-          img.addEventListener("click", () => openLb(scanned, i));
+          img.loading = "lazy";
+          img.addEventListener("click", () => openLb(scanned, scanned.indexOf(p)));
           previewRow.appendChild(img);
-        });
+        };
+
+        let data;
+        if (kind === "image") {
+          // 流式：/api/scan/stream 每页完成即推一行，首页上墙时后续页还在算。
+          const fd = new FormData();
+          selected.forEach((it) => fd.append("files", it.file, it.file.name));
+          fd.append("mode", mode);
+          fd.append("auto_crop", document.getElementById("autoCrop").checked ? "true" : "false");
+          fd.append("unify_a4", document.getElementById("unifyA4").checked ? "true" : "false");
+
+          const res = await fetch("/api/scan/stream", { method: "POST", body: fd });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || "处理失败");
+          }
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          const total = selected.length;
+          let done = 0;
+          let firstShown = false;
+          while (true) {
+            const { value, done: eof } = await reader.read();
+            if (eof) break;
+            buf += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buf.indexOf("\n")) >= 0) {
+              const line = buf.slice(0, nl).trim();
+              buf = buf.slice(nl + 1);
+              if (!line) continue;
+              const evt = JSON.parse(line);
+              if (evt.error) throw new Error(evt.error);
+              if (evt.type === "page") {
+                done++;
+                setStatus(`处理中 ${done}/${total}`, "working");
+                appendPreview({ url: evt.preview, name: `扫描结果 第 ${evt.index + 1} 页` });
+                if (!firstShown) {
+                  firstShown = true;
+                  pageBadge.textContent = `${done} 页…`;
+                  modeBadge.textContent = MODE_LABELS[evt.mode] || evt.mode || "";
+                  resultEl.classList.add("show");
+                  resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                }
+              } else if (evt.type === "done") {
+                data = evt;
+              }
+            }
+          }
+          if (!data) throw new Error("连接中断");
+          // PDF 就绪前禁用下载按钮，避免下到空链接。
+          if (data.pdf_url) {
+            pdfUrl = data.pdf_url;
+            btnDownload.href = data.pdf_url;
+            btnDownload.setAttribute("download", data.download_name || "scanned.pdf");
+          }
+          const crop = data.crop_status || [];
+          const misses = crop.filter((s) => s === "not_found").length;
+          if (misses === crop.length && crop.length > 0) {
+            outcome = ["完成 ✓ · 未检测到文档边缘，已按原图处理", "err"];
+          } else if (misses > 0) {
+            outcome = [`完成 ✓ · ${crop.length - misses}/${crop.length} 页已裁边`, "ok"];
+          } else {
+            outcome = ["完成 ✓", "ok"];
+          }
+          busy = false;
+          dropzone.classList.remove("scanning");
+          btnScan.classList.remove("working");
+          btnScan.lastChild.textContent = " 开始扫描";
+          render();
+          setStatus(outcome[0], outcome[1]);
+          return;
+        }
+
+        const fd = new FormData();
+        if (kind === "word") fd.append("word", selected[0].file, selected[0].file.name);
+        else fd.append("pdf", selected[0].file, selected[0].file.name);
+        const res = await fetch(endpoint, { method: "POST", body: fd });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error || "处理失败");
+        (data.previews || []).forEach((url, j) =>
+          appendPreview({ url, name: `扫描结果 第 ${j + 1} 页` })
+        );
+
         pageBadge.textContent = data.pages + " 页";
         // Read the mode back from the response: it reports what the server
         // applied, not what the buttons look like. Document jobs return "gray".
         modeBadge.textContent =
           kind === "word" ? "Word 转换" : kind === "pdf" ? "PDF 转换" : MODE_LABELS[data.mode] || data.mode || "";
-        // 裁边反馈：只在有页未检测到边缘时提示，避免正常情况下的噪音。
-        if (Array.isArray(data.crop_status)) {
-          const misses = data.crop_status.filter((s) => s === "not_found").length;
-          if (misses === data.pages && data.pages > 0) {
-            flashStatus("未检测到文档边缘，已按原图处理", "err");
-          } else if (misses > 0) {
-            flashStatus(`${data.pages - misses}/${data.pages} 页已裁边，其余未检测到边缘`, "err");
-          }
-        }
         pdfUrl = data.pdf_url;
         btnDownload.href = data.pdf_url;
         btnDownload.setAttribute("download", data.download_name || "scanned.pdf");
         resultEl.classList.add("show");
-        outcome = ["完成 ✓"];
         resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        outcome = ["完成 ✓"];
       } catch (err) {
         outcome = [err.message || "出错了", "err"];
       } finally {
