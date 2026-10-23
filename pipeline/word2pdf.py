@@ -6,8 +6,11 @@ headers/footers — by exporting the real .docx to PDF. The result then runs
 through the same enhancement pipeline as photo scans, so a Word page comes
 out looking like a scanned A4 page.
 
-Fallback (no Word installed, or the COM call fails): extract text with
-python-docx and typeset it via PyMuPDF. Plain but functional; loses layout.
+Second path: LibreOffice headless (Linux containers, the Docker image
+ships it) — `soffice --convert-to pdf` keeps most layout.
+
+Last fallback (neither available): extract text with python-docx and
+typeset it via PyMuPDF. Plain but functional; loses layout.
 """
 from __future__ import annotations
 
@@ -35,8 +38,10 @@ def docx_to_pdf(word_path: str | Path, output_path: str | Path) -> Path:
 
         if _word_com_export(word_path, raw_pdf):
             source = raw_pdf
+        elif _libreoffice_export(word_path, raw_pdf):
+            source = raw_pdf
         else:
-            logger.info("Word COM unavailable, falling back to text extraction")
+            logger.info("Word COM and LibreOffice unavailable, using text fallback")
             _docx_text_fallback(word_path, raw_pdf)
             source = raw_pdf
 
@@ -82,6 +87,35 @@ def _word_com_export(src: Path, dst: Path) -> bool:
         return dst.exists()
     except Exception as e:
         logger.info("Word COM export failed (%s), will try text fallback", e)
+        return False
+
+
+def _libreoffice_export(src: Path, dst: Path) -> bool:
+    """Convert via `soffice --headless`. Returns False when LibreOffice isn't
+    installed (the Docker image installs it; bare Linux users can too)."""
+    import shutil
+    import subprocess
+
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        return False
+    try:
+        # -env:UserInstallation avoids clashing with any running LibreOffice.
+        result = subprocess.run(
+            [
+                soffice, "--headless", "--norestore",
+                "-env:UserInstallation=file:///tmp/lo_scan_profile",
+                "--convert-to", "pdf", "--outdir", str(dst.parent), str(src),
+            ],
+            capture_output=True, timeout=120, check=True,
+        )
+        produced = dst.parent / (src.stem + ".pdf")
+        if produced.exists():
+            produced.replace(dst)
+            return True
+        return False
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.info("LibreOffice export failed (%s), trying next fallback", e)
         return False
 
 

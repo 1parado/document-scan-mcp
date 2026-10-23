@@ -1,0 +1,15 @@
+services:
+  document-scan:
+    build: .
+    image: document-scan:latest
+    ports:
+      - "8765:8765"
+    volumes:
+      # Keep job outputs (PDFs) across restarts; optional.
+      - scan-outputs:/app/web/outputs
+    environment:
+      SCAN_JOB_TTL: "21600"   # 6h, then outputs are reaped
+    restart: unless-stopped
+
+volumes:
+  scan-outputs:
