@@ -165,7 +165,10 @@ def _page_to_scan_image(pdf: Path, index: int, dpi: int = 150) -> np.ndarray:
     return to_a4(scanned)
 
 
-def word_pages_as_images(word_path: str | Path, preview_max_dim: int = 900) -> tuple[list, list]:
+def word_pages_as_images(
+    word_path: str | Path,
+    preview_max_dim: int = 900,
+) -> tuple[list, list]:
     """Full conversion returning (pages_bgr, previews_bgr) so the web layer can
     reuse its existing preview/JPEG plumbing without a second conversion."""
     word_path = Path(word_path)
@@ -186,3 +189,14 @@ def word_pages_as_images(word_path: str | Path, preview_max_dim: int = 900) -> t
                            interpolation=cv2.INTER_AREA)
         previews.append(small)
     return pages, previews
+
+
+def docx_to_pdf_with_previews(
+    word_path: str | Path,
+    output_path: str | Path,
+    preview_max_dim: int = 900,
+) -> tuple[Path, list]:
+    """Convert and also return downscaled previews for the web result row."""
+    pages, previews = word_pages_as_images(word_path, preview_max_dim)
+    out = images_to_pdf(pages, Path(output_path))
+    return out.resolve(), previews
