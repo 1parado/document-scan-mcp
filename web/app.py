@@ -4,10 +4,15 @@ Upload photos → edge detect / warp / enhance → A4 PDF
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import re
 import shutil
 import sys
+import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List
 
@@ -35,9 +40,92 @@ MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 MAX_PAGES = 40
 PREVIEW_MAX_DIM = 900
 
+
+def _truthy(value: str) -> bool:
+    return value.lower() in ("1", "true", "yes", "on")
+
+
+# Successful jobs live for SCAN_JOB_TTL and are then reaped; everything of ours
+# also goes on a clean shutdown. Both only ever touch 12-hex job directories, so
+# a folder someone made by hand inside web/outputs survives.
+JOB_TTL_SECONDS = int(os.environ.get("SCAN_JOB_TTL", "21600"))
+REAP_INTERVAL = int(os.environ.get("SCAN_REAP_INTERVAL", "300"))
+CLEAN_ON_EXIT = _truthy(os.environ.get("SCAN_CLEAN_ON_EXIT", "true"))
+JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+
 INDEX_HTML = (APP_DIR / "templates" / "index.html").read_text(encoding="utf-8")
 
-app = FastAPI(title="Document Scan", version="1.0")
+
+def _job_dirs() -> List[Path]:
+    if not OUTPUT_DIR.is_dir():
+        return []
+    return [p for p in OUTPUT_DIR.iterdir() if p.is_dir() and JOB_ID_RE.match(p.name)]
+
+
+def _drop_job_dir(path: Path) -> int:
+    """Remove one job directory and report the bytes it held. A browser still
+    reading the PDF can keep the tree open, so leftover is logged, not hidden."""
+    size = 0
+    for f in path.rglob("*"):
+        try:
+            if f.is_file():
+                size += f.stat().st_size
+        except OSError:
+            continue
+    shutil.rmtree(path, ignore_errors=True)
+    if path.exists():
+        logger.warning("job %s still present after cleanup (file open?)", path.name)
+    return size
+
+
+def _drop_all() -> tuple[int, int]:
+    removed = freed = 0
+    for d in _job_dirs():
+        freed += _drop_job_dir(d)
+        removed += 1
+    return removed, freed
+
+
+def _reap_once() -> tuple[int, int]:
+    now = time.time()
+    removed = freed = 0
+    for d in _job_dirs():
+        try:
+            if now - d.stat().st_mtime < JOB_TTL_SECONDS:
+                continue
+        except OSError:
+            continue
+        freed += _drop_job_dir(d)
+        removed += 1
+    return removed, freed
+
+
+async def _reaper() -> None:
+    while True:
+        await asyncio.sleep(REAP_INTERVAL)
+        removed, freed = await asyncio.to_thread(_reap_once)
+        if removed:
+            logger.info("reaped %d expired job(s), %.1f MB", removed, freed / 1e6)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_reaper()) if JOB_TTL_SECONDS > 0 else None
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        if CLEAN_ON_EXIT:
+            removed, freed = await asyncio.to_thread(_drop_all)
+            logger.info("shutdown: removed %d job dir(s), %.1f MB", removed, freed / 1e6)
+
+
+app = FastAPI(title="Document Scan", version="1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
 MEDIA_TYPES = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".png": "image/png"}
@@ -50,10 +138,6 @@ class ScanError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
-
-
-def _truthy(value: str) -> bool:
-    return value.lower() in ("1", "true", "yes", "on")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -142,7 +226,7 @@ def scan(
         )
     finally:
         if not done:
-            shutil.rmtree(job_dir, ignore_errors=True)
+            _drop_job_dir(job_dir)
 
 
 @app.get("/outputs/{job_id}/{filename}")
@@ -165,4 +249,14 @@ async def get_output(job_id: str, filename: str, inline: bool = False):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8765, reload=False)
+    # Caps how long Ctrl+C waits for in-flight responses before running the
+    # lifespan purge. An idle keep-alive from the PDF preview closes on its own;
+    # a client still downloading a big PDF holds shutdown open forever, and the
+    # purge would then never run. Price: that download is cut off at the timeout.
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8765,
+        reload=False,
+        timeout_graceful_shutdown=int(os.environ.get("SCAN_SHUTDOWN_TIMEOUT", "5")),
+    )
