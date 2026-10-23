@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Document Scan</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --text: #1a1d23;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-soft: #eff6ff;
+      --success: #059669;
+      --radius: 16px;
+      --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 48px 20px 80px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 36px;
+    }
+
+    header .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    header .logo-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 18px;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, .35);
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    header p {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-top: 6px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    /* Drop zone */
+    .drop {
+      border: 2px dashed #c7d2fe;
+      border-radius: 14px;
+      margin: 20px;
+      padding: 40px 24px;
+      text-align: center;
+      background: var(--accent-soft);
+      transition: border-color .15s, background .15s, transform .15s;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .drop.dragover {
+      border-color: var(--accent);
+      background: #dbeafe;
+      transform: scale(1.01);
+    }
+
+    .drop.has-files {
+      background: #fff;
+      border-color: var(--border);
+      border-style: solid;
+      padding: 16px;
+    }
+
+    .drop-icon {
+      font-size: 2rem;
+      margin-bottom: 8px;
+      opacity: .85;
+    }
+
+    .drop h2 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .drop p {
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    .drop input[type=file] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .file-list {
+      display: none;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .drop.has-files .file-list { display: flex; }
+    .drop.has-files .drop-hint { display: none; }
+
+    .thumb {
+      width: 88px;
+      height: 112px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #f3f4f6;
+    }
+
+    .thumb-wrap {
+      position: relative;
+    }
+
+    .thumb-wrap .ord {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      background: rgba(0,0,0,.65);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 999px;
+    }
+
+    /* Options */
+    .opts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 0 24px 8px;
+    }
+
+    @media (max-width: 560px) {
+      .opts { grid-template-columns: 1fr; }
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .seg {
+      display: flex;
+      background: #f3f4f6;
+      border-radius: 10px;
+      padding: 3px;
+      gap: 2px;
+    }
+
+    .seg button {
+      flex: 1;
+      border: none;
+      background: transparent;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .12s;
+      font-family: inherit;
+    }
+
+    .seg button.active {
+      background: #fff;
+      color: var(--text);
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+
+    .toggles {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      justify-content: center;
+      padding-top: 4px;
+    }
+
+    .toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle input {
+      appearance: none;
+      width: 40px;
+      height: 22px;
+      border-radius: 999px;
+      background: #d1d5db;
+      position: relative;
+      cursor: pointer;
+      transition: background .15s;
+      flex-shrink: 0;
+    }
+
+    .toggle input::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,.2);
+      transition: transform .15s;
+    }
+
+    .toggle input:checked {
+      background: var(--accent);
+    }
+
+    .toggle input:checked::after {
+      transform: translateX(18px);
+    }
+
+    /* Actions */
+    .actions {
+      padding: 20px 24px 24px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 12px;
+      padding: 12px 22px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background .12s, transform .08s, opacity .12s;
+    }
+
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(37, 99, 235, .35);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .btn-ghost:hover:not(:disabled) {
+      color: var(--text);
+      background: #f3f4f6;
+    }
+
+    .status {
+      margin-left: auto;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .status.working { color: var(--accent); }
+    .status.ok { color: var(--success); }
+    .status.err { color: #dc2626; }
+
+    /* Result */
+    .result {
+      display: none;
+      margin-top: 24px;
+    }
+
+    .result.show { display: block; }
+
+    .result .card {
+      padding: 20px 24px 24px;
+    }
+
+    .result h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .result h3 span.badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: #ecfdf5;
+      color: var(--success);
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+
+    .preview-row {
+      display: flex;
+      gap: 12px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+      margin-bottom: 18px;
+    }
+
+    .preview-row img {
+      height: 200px;
+      width: auto;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,.04);
+    }
+
+    .result-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn-download {
+      background: var(--success);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(5, 150, 105, .3);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-download:hover {
+      background: #047857;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 40px;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #bfdbfe;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      vertical-align: -2px;
+      margin-right: 6px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo">
+        <div class="logo-icon">📄</div>
+        <h1>Document Scan</h1>
+      </div>
+      <p>本地扫描 · 透视校正 · 增强 · 导出 A4 PDF</p>
+    </header>
+
+    <div class="card">
+      <div class="drop" id="dropzone">
+        <input type="file" id="fileInput" accept="image/*" multiple />
+        <div class="drop-hint">
+          <div class="drop-icon">⬆️</div>
+          <h2>拖放图片到这里</h2>
+          <p>或点击选择 · 支持多张 · JPG / PNG / WEBP</p>
+        </div>
+        <div class="file-list" id="fileList"></div>
+      </div>
+
+      <div class="opts">
+        <div class="field">
+          <label>扫描模式</label>
+          <div class="seg" id="modeSeg">
+            <button type="button" data-mode="color" class="active">彩色</button>
+            <button type="button" data-mode="gray">灰度</button>
+            <button type="button" data-mode="bw">黑白</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>选项</label>
+          <div class="toggles">
+            <label class="toggle">
+              <input type="checkbox" id="autoCrop" checked />
+              <span>智能裁边（外扩保护内容）</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="unifyA4" checked />
+              <span>统一为 A4 页面</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="btnScan" disabled>开始扫描</button>
+        <button class="btn btn-ghost" id="btnClear" disabled>清空</button>
+        <div class="status" id="status"></div>
+      </div>
+    </div>
+
+    <div class="result" id="result">
+      <div class="card">
+        <h3>处理完成 <span class="badge" id="pageBadge">0 页</span></h3>
+        <div class="preview-row" id="previewRow"></div>
+        <div class="result-actions">
+          <a class="btn btn-download" id="btnDownload" href="#" download>
+            ↓ 下载 PDF
+          </a>
+          <button class="btn btn-ghost" id="btnAgain">继续扫描</button>
+        </div>
+      </div>
+    </div>
+
+    <footer>100% 本地处理 · 无上传云端 · Document Scan MCP</footer>
+  </div>
+
+  <script>
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("fileInput");
+    const fileList = document.getElementById("fileList");
+    const btnScan = document.getElementById("btnScan");
+    const btnClear = document.getElementById("btnClear");
+    const statusEl = document.getElementById("status");
+    const resultEl = document.getElementById("result");
+    const previewRow = document.getElementById("previewRow");
+    const btnDownload = document.getElementById("btnDownload");
+    const pageBadge = document.getElementById("pageBadge");
+    const modeSeg = document.getElementById("modeSeg");
+
+    let selectedFiles = [];
+    let mode = "color";
+
+    modeSeg.querySelectorAll("button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        modeSeg.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        mode = btn.dataset.mode;
+      });
+    });
+
+    function setFiles(files) {
+      selectedFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
+      fileList.innerHTML = "";
+      if (selectedFiles.length === 0) {
+        dropzone.classList.remove("has-files");
+        btnScan.disabled = true;
+        btnClear.disabled = true;
+        return;
+      }
+      dropzone.classList.add("has-files");
+      btnScan.disabled = false;
+      btnClear.disabled = false;
+      selectedFiles.forEach((f, i) => {
+        const wrap = document.createElement("div");
+        wrap.className = "thumb-wrap";
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = URL.createObjectURL(f);
+        const ord = document.createElement("span");
+        ord.className = "ord";
+        ord.textContent = i + 1;
+        wrap.appendChild(img);
+        wrap.appendChild(ord);
+        fileList.appendChild(wrap);
+      });
+    }
+
+    dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropzone.classList.add("dragover");
+    });
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      if (e.dataTransfer.files?.length) setFiles(e.dataTransfer.files);
+    });
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files?.length) setFiles(fileInput.files);
+    });
+
+    btnClear.addEventListener("click", () => {
+      fileInput.value = "";
+      setFiles([]);
+      resultEl.classList.remove("show");
+      statusEl.textContent = "";
+      statusEl.className = "status";
+    });
+
+    document.getElementById("btnAgain").addEventListener("click", () => {
+      btnClear.click();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+
+    btnScan.addEventListener("click", async () => {
+      if (!selectedFiles.length) return;
+      btnScan.disabled = true;
+      statusEl.className = "status working";
+      statusEl.innerHTML = '<span class="spinner"></span>处理中…';
+      resultEl.classList.remove("show");
+
+      const fd = new FormData();
+      selectedFiles.forEach((f) => fd.append("files", f));
+      fd.append("mode", mode);
+      fd.append("auto_crop", document.getElementById("autoCrop").checked ? "true" : "false");
+      fd.append("unify_a4", document.getElementById("unifyA4").checked ? "true" : "false");
+
+      try {
+        const res = await fetch("/api/scan", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "处理失败");
+
+        previewRow.innerHTML = "";
+        (data.previews || []).forEach((url) => {
+          const img = document.createElement("img");
+          img.src = url;
+          img.alt = "preview";
+          previewRow.appendChild(img);
+        });
+        pageBadge.textContent = data.pages + " 页";
+        btnDownload.href = data.pdf_url;
+        btnDownload.setAttribute("download", data.download_name || "scanned.pdf");
+        resultEl.classList.add("show");
+        statusEl.className = "status ok";
+        statusEl.textContent = "完成";
+        resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch (err) {
+        statusEl.className = "status err";
+        statusEl.textContent = err.message || "出错了";
+      } finally {
+        btnScan.disabled = selectedFiles.length === 0;
+      }
+    });
+  </script>
+</body>
+</html>
