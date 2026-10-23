@@ -641,7 +641,6 @@
       </div>
       <div class="titles">
         <h1>Document Scan</h1>
-        <p>本地处理 · 透视校正 · 导出 PDF</p>
       </div>
       <button type="button" class="settings-btn" id="btnSettings" aria-expanded="false" aria-label="展示更多" title="展示更多">
         <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
@@ -663,9 +662,9 @@
             <path d="M3 11.5v2A1.5 1.5 0 0 0 4.5 15h9a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
           </svg>
         </div>
-        <h2>拖放图片到此处</h2>
+        <h2>拖放文件到此处</h2>
         <p class="sub">选择文件，或直接粘贴截图（Ctrl + V）</p>
-        <span class="pick-btn">选择图片</span>
+        <span class="pick-btn">选择文件</span>
       </div>
       <div class="file-list" id="fileList"></div>
     </div>
@@ -892,18 +891,36 @@
       }
     }
 
+    const isWordFile = (f) => /\.(docx?|DOCX?)$/.test(f.name);
+
     function addFiles(listObj) {
+      const incoming = Array.from(listObj || []).filter(
+        (f) => f.type.startsWith("image/") || isWordFile(f)
+      );
+      if (!incoming.length) return 0;
+
+      const hasWord = selected[0]?.word;
+      const wordIncoming = incoming.find(isWordFile);
+
+      // 互斥：列表已有内容时，另一种类型直接拒绝并提醒；同类型照常追加。
+      if (hasWord && !wordIncoming) {
+        flashStatus("已有 Word 文档，请先移除后再上传图片", "err");
+        return 0;
+      }
+      if (!hasWord && selected.length && wordIncoming) {
+        flashStatus("已有图片，Word 文档不能与图片混传，请先清空", "err");
+        return 0;
+      }
+
+      if (wordIncoming) {
+        clearAll();
+        selected.push({ file: wordIncoming, url: "", word: true });
+        render();
+        return 1;
+      }
+
       let added = 0;
-      Array.from(listObj || []).forEach((f) => {
-        const isWord = /\.(docx?|DOCX?)$/.test(f.name);
-        if (!f.type.startsWith("image/") && !isWord) return;
-        // Word 文档一次只能有一份，且与图片互斥：直接替换当前列表。
-        if (isWord) {
-          clearAll();
-          selected.push({ file: f, url: "", word: true });
-          render();
-          return added = 1;
-        }
+      incoming.forEach((f) => {
         const it = { file: f, url: URL.createObjectURL(f) };
         selected.push(it);
         // 增量插入：只对新增的缩略图添加动画。
@@ -913,6 +930,16 @@
       });
       syncState();
       return added;
+    }
+
+    /* 临时错误提醒：3 秒后恢复为常规状态行。 */
+    let flashTimer = 0;
+    function flashStatus(text, kind) {
+      clearTimeout(flashTimer);
+      setStatus(text, kind);
+      flashTimer = setTimeout(() => {
+        if (!busy) syncState();
+      }, 3000);
     }
 
     /* ---------- 缩略图拖拽排序 ---------- */
