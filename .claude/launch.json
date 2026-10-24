@@ -2,10 +2,14 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "promo",
+      "name": "app",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8901", "--directory", "promo"],
-      "port": 8901
+      "runtimeArgs": ["-m", "http.server", "8902", "--directory", "web/static"],
+      "port": 8902
+    },
+    {
+      "name": "app-attach",
+      "url": "http://localhost:8765"
     }
   ]
 }

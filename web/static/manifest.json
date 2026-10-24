@@ -1,0 +1,17 @@
+{
+  "name": "Document Scan",
+  "short_name": "Scan",
+  "description": "本地文档扫描仪 — 照片 / Word / PDF 转扫描件，100% 本地处理",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f5",
+  "theme_color": "#31614f",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
