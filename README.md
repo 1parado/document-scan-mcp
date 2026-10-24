@@ -55,6 +55,11 @@ PYTHONPATH=. python -m uvicorn web.app:app --host 0.0.0.0 --port 8765 \
 Open http://127.0.0.1:8765  
 
 - Drag & drop photos, or drop a single `.docx` / `.pdf` to convert it
+- **PWA**: install it from the browser menu ("Add to home screen" on
+  mobile) — app icon, standalone display, offline app shell
+- **Manual crop**: the ⌗ badge on any thumbnail opens a four-corner
+  editor; drag the handles to frame the document when auto detection
+  misses, then re-scan
 - Mode: color / gray / bw  
 - Smart crop (with margin protection) + optional A4 unify  
 - Streaming progress: pages appear as they finish  
