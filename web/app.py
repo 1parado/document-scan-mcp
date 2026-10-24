@@ -48,6 +48,25 @@ def _truthy(value: str) -> bool:
     return value.lower() in ("1", "true", "yes", "on")
 
 
+def _parse_quad(raw: str):
+    """Parse a manual-crop quad "TL,TR,BR,BL" (JSON 4×2 or flat 8 numbers)
+    into a (4,2) float array, or None if absent/invalid."""
+    import json as _json
+
+    if not raw or not raw.strip():
+        return None
+    try:
+        pts = _json.loads(raw)
+    except ValueError:
+        raise ScanError("corners 格式错误：应为 4 个 [x, y] 点", 422)
+    pts = list(pts)
+    if len(pts) == 8:  # flat form
+        pts = [pts[j:j + 2] for j in range(0, 8, 2)]
+    if len(pts) != 4 or any(len(p) != 2 for p in pts):
+        raise ScanError("corners 格式错误：应为 4 个 [x, y] 点", 422)
+    return [[float(p[0]), float(p[1])] for p in pts]
+
+
 # Successful jobs live for SCAN_JOB_TTL and are then reaped; everything of ours
 # also goes on a clean shutdown. Both only ever touch 12-hex job directories, so
 # a folder someone made by hand inside web/outputs survives.
@@ -154,9 +173,14 @@ def scan(
     mode: str = Form("color"),
     auto_crop: str = Form("true"),
     unify_a4: str = Form("true"),
+    corners: List[str] = Form([]),
 ):
     """Sync handler on purpose: FastAPI runs it in a worker thread, which keeps
-    the multi-second OpenCV work off the event loop."""
+    the multi-second OpenCV work off the event loop.
+
+    corners: optional JSON quads, one per file ("[[x,y]×4]" in source-image
+    pixels, TL/TR/BR/BL) from the manual crop UI. When given for a file,
+    auto detection is skipped for it."""
     job_id = uuid.uuid4().hex[:12]
     job_dir = OUTPUT_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -174,6 +198,7 @@ def scan(
 
         do_crop = _truthy(auto_crop)
         do_a4 = _truthy(unify_a4)
+        manual = [_parse_quad(c) for c in corners]
 
         statuses: list[str] = []
         for i, uf in enumerate(files):
@@ -191,7 +216,10 @@ def scan(
                 raise ScanError(f"无法读取图片: {name}")
 
             page_status: list = []
-            processed = process_image(img, mode=mode, auto_crop=do_crop, crop_status=page_status)
+            processed = process_image(
+                img, mode=mode, auto_crop=do_crop, crop_status=page_status,
+                corners=manual[i] if i < len(manual) else None,
+            )
             if do_a4:
                 processed = to_a4(processed)
             pages.append(processed)
@@ -242,6 +270,7 @@ async def scan_stream(
     mode: str = Form("color"),
     auto_crop: str = Form("true"),
     unify_a4: str = Form("true"),
+    corners: List[str] = Form([]),
 ):
     """Streaming variant of /api/scan: NDJSON, one line per finished page plus
     a final "done" line. The UI shows pages as they land instead of waiting
@@ -270,6 +299,10 @@ async def scan_stream(
     # UploadFile file objects close when the request scope ends; the response
     # generator runs after that, so read every upload into memory up front.
     # Bounded by MAX_PAGES × MAX_UPLOAD_BYTES, same as the sync endpoint.
+    try:
+        manual = [_parse_quad(c) for c in corners]
+    except ScanError as e:
+        return JSONResponse({"error": e.message}, status_code=e.status_code)
     uploaded: list[tuple[str, bytes]] = []
     for uf in files:
         content = uf.file.read(MAX_UPLOAD_BYTES + 1)
@@ -295,7 +328,8 @@ async def scan_stream(
 
                 page_status: list = []
                 processed = process_image(
-                    img, mode=mode, auto_crop=opts["do_crop"], crop_status=page_status
+                    img, mode=mode, auto_crop=opts["do_crop"], crop_status=page_status,
+                    corners=manual[i] if i < len(manual) else None,
                 )
                 if opts["do_a4"]:
                     processed = to_a4(processed)
