@@ -1121,6 +1121,8 @@
     const cropQuadPoly = document.querySelector("#cropQuad polygon");
     const cropHandles = [...document.querySelectorAll(".crop-handle")];
 
+    let cropQuadSvgW = 100, cropQuadSvgH = 100;
+
     function openCrop(i) {
       const it = selected[i];
       if (!it || it.word || it.pdf) return;
@@ -1132,6 +1134,8 @@
       cropImg.onload = () => {
         cropImgSize = { w: cropImg.naturalWidth, h: cropImg.naturalHeight };
         const r = cropImg.getBoundingClientRect();
+        cropQuadSvgW = r.width;
+        cropQuadSvgH = r.height;
         cropPts = [
           [r.width * .1, r.height * .1], [r.width * .9, r.height * .1],
           [r.width * .9, r.height * .9], [r.width * .1, r.height * .9],
@@ -1148,6 +1152,9 @@
     }
 
     function drawCrop() {
+      // SVG 用显示像素坐标：viewBox 跟随图片矩形，多边形才与角点重合。
+      const quadSvg = document.getElementById("cropQuad");
+      quadSvg.setAttribute("viewBox", `0 0 ${cropQuadSvgW} ${cropQuadSvgH}`);
       cropQuadPoly.setAttribute("points", cropPts.map((p) => p.join(",")).join(" "));
       cropHandles.forEach((h, i) => {
         h.style.left = cropPts[i][0] + "px";
@@ -1178,6 +1185,8 @@
       if (cropDrag < 0) return;
       const [x, y] = handlePos(e);
       const r = cropImg.getBoundingClientRect();
+      cropQuadSvgW = r.width;
+      cropQuadSvgH = r.height;
       cropPts[cropDrag] = [
         Math.max(0, Math.min(r.width, x - r.left)),
         Math.max(0, Math.min(r.height, y - r.top)),
