@@ -2,8 +2,12 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Document Scan</title>
+  <meta name="theme-color" content="#31614f" />
+  <link rel="icon" type="image/svg+xml" href="/static/icon.svg" />
+  <link rel="apple-touch-icon" href="/static/icon.svg" />
+  <link rel="manifest" href="/static/manifest.json" />
   <style>
     :root {
       /* 卡片式布局 + 深苔绿强调色（不用蓝） */
@@ -285,6 +289,81 @@
     .thumb-wrap:hover .rm,
     .thumb-wrap .rm:focus-visible { opacity: 1; }
     .thumb-wrap .rm:hover { color: var(--danger); border-color: var(--danger); }
+
+    /* 手动裁剪入口（左上角第二枚角标，序号右侧） */
+    .thumb-wrap .crop-entry {
+      top: -6px;
+      right: auto;
+      left: 14px;
+      font-size: 11px;
+    }
+    .thumb-wrap .crop-entry.set {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      opacity: 1;
+    }
+
+    /* ---------- 手动裁剪浮层 ---------- */
+    .crop-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 60;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 14px;
+      background: rgba(23, 27, 25, .92);
+      backdrop-filter: blur(3px);
+    }
+    .crop-overlay.show { display: flex; }
+
+    .crop-stage {
+      position: relative;
+      max-width: min(92vw, 800px);
+      max-height: 62vh;
+      touch-action: none;
+    }
+    .crop-stage img { display: block; max-width: 100%; max-height: 62vh; }
+
+    .crop-quad {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .crop-quad polygon {
+      fill: rgba(76, 195, 138, .14);
+      stroke: var(--accent);
+      stroke-width: 2;
+    }
+    .crop-handle {
+      position: absolute;
+      width: 34px; height: 34px;   /* 大触控目标，视觉圆点小 */
+      margin: -17px 0 0 -17px;
+      display: grid;
+      place-items: center;
+      cursor: grab;
+      touch-action: none;
+    }
+    .crop-handle::after {
+      content: "";
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2.5px solid #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,.4);
+    }
+    .crop-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .crop-actions .btn { background: #fff; color: var(--text); }
+    .crop-actions .btn-primary { background: var(--accent); color: #fff; }
+    .crop-hint { color: #9aa5a0; font-size: .8rem; }
 
     /* ---------- 扫描模式卡片 ---------- */
     .section-label {
@@ -581,11 +660,27 @@
     }
 
     @media (max-width: 560px) {
+      body { padding: 20px 12px calc(24px + env(safe-area-inset-bottom)); }
       .card { padding: 20px 16px 18px; }
+      header .logo { width: 34px; height: 34px; }
+      header h1 { font-size: 1rem; }
+      .drop { padding: 28px 14px; }
+      /* 触控目标 ≥44px */
+      .thumb { width: 84px; height: 108px; }
+      .thumb-wrap .rm { width: 26px; height: 26px; top: -8px; right: -8px; font-size: 12px; opacity: 1; }
+      .thumb-wrap .rm::before { content: ""; position: absolute; inset: -10px; }
+      .mode-card { padding: 12px 6px 10px; }
+      .toggle-row { padding: 12px 0; }
+      .btn { padding: 13px 20px; }
+      .btn-ghost { min-width: 44px; }
+      .actions { gap: 8px; }
+      .status { font-size: .7rem; }
       .lightbox { padding: 56px 10px; }
       .lb-btn { width: 34px; height: 50px; font-size: 20px; }
       .lb-prev { left: 6px; }
       .lb-next { right: 6px; }
+      /* 手机上手势导航会吃掉左右滑键，lightbox 支持滑动切换 */
+      .lb-stage { touch-action: pan-y; }
     }
 
     footer {
@@ -750,6 +845,24 @@
     </div>
   </div>
 
+  <div class="crop-overlay" id="cropOverlay">
+    <div class="crop-stage" id="cropStage">
+      <img id="cropImg" alt="裁剪" />
+      <svg class="crop-quad" id="cropQuad" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <polygon points="0,0 100,0 100,100 0,100" />
+      </svg>
+      <div class="crop-handle" data-h="0"></div>
+      <div class="crop-handle" data-h="1"></div>
+      <div class="crop-handle" data-h="2"></div>
+      <div class="crop-handle" data-h="3"></div>
+    </div>
+    <div class="crop-actions">
+      <button type="button" class="btn" id="cropCancel">取消</button>
+      <button type="button" class="btn btn-primary" id="cropApply">应用并重扫</button>
+    </div>
+    <p class="crop-hint">拖动四个角点框住文档，应用后按当前设置重新扫描</p>
+  </div>
+
   <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="图片预览">
     <button type="button" class="lb-btn lb-close" id="lbClose" aria-label="关闭预览">✕</button>
     <button type="button" class="lb-btn lb-prev" id="lbPrev" aria-label="上一页">‹</button>
@@ -761,6 +874,11 @@
   </div>
 
   <script>
+    // PWA: 注册 service worker（仅在 https 或 localhost 下生效）
+    if ("serviceWorker" in navigator && location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1") {
+      navigator.serviceWorker.register("/static/sw.js").catch(() => {});
+    }
+
     const dropzone = document.getElementById("dropzone");
     const fileInput = document.getElementById("fileInput");
     const fileList = document.getElementById("fileList");
@@ -825,6 +943,20 @@
       const ord = document.createElement("span");
       ord.className = "ord";
       ord.textContent = i + 1;
+      // 手动裁剪入口：仅图片项，有手动框时高亮显示。
+      if (!it.word && !it.pdf) {
+        const ce = document.createElement("button");
+        ce.type = "button";
+        ce.className = "rm crop-entry" + (it.manual ? " set" : "");
+        ce.setAttribute("aria-label", `手动裁剪第 ${i + 1} 张`);
+        ce.title = "手动裁剪";
+        ce.textContent = "⌗";
+        ce.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openCrop(i);
+        });
+        wrap.appendChild(ce);
+      }
       let media;
       if (it.word || it.pdf) {
         // Word / PDF 文档卡片：没有 blob URL，用文档图标卡片代替图片缩略图。
@@ -975,6 +1107,117 @@
       syncState();
       return added;
     }
+
+    /* ---------- 手动裁剪框 ---------- */
+    /* 图片项记录手动四角（原图像素坐标，TL/TR/BR/BL）；重扫时随文件发送。 */
+
+    let cropIdx = -1;             // 正在编辑的 selected 下标
+    let cropPts = [];             // 显示坐标系下的 4 点
+    let cropDrag = -1;
+    let cropImgSize = { w: 1, h: 1 };
+
+    const cropOverlay = document.getElementById("cropOverlay");
+    const cropImg = document.getElementById("cropImg");
+    const cropQuadPoly = document.querySelector("#cropQuad polygon");
+    const cropHandles = [...document.querySelectorAll(".crop-handle")];
+
+    function openCrop(i) {
+      const it = selected[i];
+      if (!it || it.word || it.pdf) return;
+      cropIdx = i;
+      cropImg.src = it.url;
+      cropOverlay.classList.add("show");
+      document.body.style.overflow = "hidden";
+      // 初始框：80% 居中
+      cropImg.onload = () => {
+        cropImgSize = { w: cropImg.naturalWidth, h: cropImg.naturalHeight };
+        const r = cropImg.getBoundingClientRect();
+        cropPts = [
+          [r.width * .1, r.height * .1], [r.width * .9, r.height * .1],
+          [r.width * .9, r.height * .9], [r.width * .1, r.height * .9],
+        ];
+        // 已有手动框则恢复
+        if (it.manual) {
+          cropPts = it.manual.map(([x, y]) => [
+            x / cropImgSize.w * r.width, y / cropImgSize.h * r.height,
+          ]);
+        }
+        drawCrop();
+      };
+      if (cropImg.complete) cropImg.onload();
+    }
+
+    function drawCrop() {
+      cropQuadPoly.setAttribute("points", cropPts.map((p) => p.join(",")).join(" "));
+      cropHandles.forEach((h, i) => {
+        h.style.left = cropPts[i][0] + "px";
+        h.style.top = cropPts[i][1] + "px";
+      });
+    }
+
+    function stagePoint(e) {
+      const r = cropImg.getBoundingClientRect();
+      return [
+        Math.max(0, Math.min(r.width, e.clientX - r.left)),
+        Math.max(0, Math.min(r.height, e.clientY - r.top)),
+      ];
+    }
+
+    function handlePos(e) {
+      // 支持鼠标和触摸
+      if (e.touches?.length) return [e.touches[0].clientX, e.touches[0].clientY];
+      return [e.clientX, e.clientY];
+    }
+
+    function onHandleDown(e) {
+      cropDrag = +e.currentTarget.dataset.h;
+      e.preventDefault();
+    }
+
+    function onMove(e) {
+      if (cropDrag < 0) return;
+      const [x, y] = handlePos(e);
+      const r = cropImg.getBoundingClientRect();
+      cropPts[cropDrag] = [
+        Math.max(0, Math.min(r.width, x - r.left)),
+        Math.max(0, Math.min(r.height, y - r.top)),
+      ];
+      drawCrop();
+      if (e.cancelable) e.preventDefault();
+    }
+
+    function onUp() { cropDrag = -1; }
+
+    cropHandles.forEach((h) => {
+      h.addEventListener("mousedown", onHandleDown);
+      h.addEventListener("touchstart", onHandleDown, { passive: false });
+    });
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchend", onUp);
+
+    document.getElementById("cropCancel").addEventListener("click", () => {
+      cropOverlay.classList.remove("show");
+      document.body.style.overflow = "";
+      cropIdx = -1;
+    });
+
+    document.getElementById("cropApply").addEventListener("click", () => {
+      if (cropIdx < 0) return;
+      const it = selected[cropIdx];
+      const r = cropImg.getBoundingClientRect();
+      // 显示坐标 → 原图像素坐标
+      it.manual = cropPts.map(([x, y]) => [
+        Math.round(x / r.width * cropImgSize.w),
+        Math.round(y / r.height * cropImgSize.h),
+      ]);
+      cropOverlay.classList.remove("show");
+      document.body.style.overflow = "";
+      cropIdx = -1;
+      flashStatus("已应用手动裁剪，正在重新扫描", "ok");
+      if (!busy) btnScan.click();
+    });
 
     /* 临时错误提醒：3 秒后恢复为常规状态行。 */
     let flashTimer = 0;
@@ -1184,6 +1427,18 @@
       else if (e.key === "ArrowRight") stepLb(1);
     });
 
+    // 手机上左右滑动切换 lightbox 页面。
+    let touchX = null;
+    lightbox.addEventListener("touchstart", (e) => {
+      touchX = e.touches[0].clientX;
+    }, { passive: true });
+    lightbox.addEventListener("touchend", (e) => {
+      if (touchX === null) return;
+      const dx = e.changedTouches[0].clientX - touchX;
+      touchX = null;
+      if (Math.abs(dx) > 48) stepLb(dx < 0 ? 1 : -1);
+    }, { passive: true });
+
     /* ---------- PDF preview ---------- */
 
     let pdfUrl = "";
@@ -1246,7 +1501,10 @@
         if (kind === "image") {
           // 流式：/api/scan/stream 每页完成即推一行，首页上墙时后续页还在算。
           const fd = new FormData();
-          selected.forEach((it) => fd.append("files", it.file, it.file.name));
+          selected.forEach((it) => {
+            fd.append("files", it.file, it.file.name);
+            fd.append("corners", it.manual ? JSON.stringify(it.manual) : "");
+          });
           fd.append("mode", mode);
           fd.append("auto_crop", document.getElementById("autoCrop").checked ? "true" : "false");
           fd.append("unify_a4", document.getElementById("unifyA4").checked ? "true" : "false");
