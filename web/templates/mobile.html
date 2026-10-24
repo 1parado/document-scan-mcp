@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>上传照片 · Document Scan</title>
+<style>
+  :root { --accent: #31614f; --bg: #f6f7f5; --text: #212623; --muted: #79827c; --hairline: #e4e7e3; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; display: flex; justify-content: center;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  .card { width: 100%; max-width: 420px; }
+  h1 { font-size: 1.05rem; font-weight: 700; display: flex; align-items: center; gap: 9px; }
+  h1 .logo { width: 32px; height: 32px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: #fff; }
+  p.sub { color: var(--muted); font-size: .82rem; margin-top: 2px; }
+  .drop {
+    margin-top: 18px;
+    border: 1.5px dashed #c3d4cb; border-radius: 14px;
+    background: #eef3f0;
+    padding: 34px 16px; text-align: center;
+  }
+  .btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; margin-top: 10px;
+    padding: 14px; border: none; border-radius: 12px;
+    background: var(--accent); color: #fff;
+    font-size: .95rem; font-weight: 600; font-family: inherit;
+  }
+  .btn.ghost { background: #fff; color: var(--accent); border: 1px solid #c3d4cb; }
+  .btn:active { transform: scale(.98); }
+  #input { display: none; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; justify-content: center; }
+  .thumbs img { width: 72px; height: 92px; object-fit: cover; border-radius: 8px; border: 1px solid var(--hairline); }
+  .done {
+    margin-top: 14px; text-align: center;
+    background: #eef3f0; color: var(--accent);
+    border-radius: 10px; padding: 11px; font-size: .88rem; font-weight: 600;
+    display: none;
+  }
+  .done.show { display: block; }
+  .hint { color: var(--muted); font-size: .75rem; text-align: center; margin-top: 16px; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>
+      <span class="logo">
+        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <rect x="2" y="3.5" width="14" height="11" rx="2" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M4.5 6.5h9M4.5 9h9M4.5 11.5h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </span>
+      上传照片
+    </h1>
+    <p class="sub">照片将直接传到你电脑上的 Document Scan</p>
+
+    <div class="drop">
+      <button class="btn" id="pick">📷 拍照或从相册选择</button>
+      <button class="btn ghost" id="pickMore">＋ 继续添加</button>
+      <input type="file" id="input" accept="image/*" multiple />
+      <div class="thumbs" id="thumbs"></div>
+    </div>
+
+    <div class="done" id="done">✓ 已发送到电脑，请在电脑上查看</div>
+    <p class="hint">照片仅在本地网络内传输到你的电脑，<br>不经任何云端服务器。</p>
+  </div>
+
+<script>
+  const code = location.pathname.split("/").pop();
+  const input = document.getElementById("input");
+  const thumbs = document.getElementById("thumbs");
+  const done = document.getElementById("done");
+  const pick = document.getElementById("pick");
+  const pickMore = document.getElementById("pickMore");
+  let pending = [];
+
+  pick.addEventListener("click", () => {
+    // 首次点击优先调起相机（若设备允许）；之后"继续添加"走相册。
+    input.removeAttribute("capture");
+    input.click();
+  });
+  pickMore.addEventListener("click", () => input.click());
+
+  input.addEventListener("change", async () => {
+    const files = Array.from(input.files || []).filter((f) => f.type.startsWith("image/"));
+    input.value = "";
+    if (!files.length) return;
+    pending.push(...files);
+    thumbs.innerHTML = "";
+    pending.forEach((f) => {
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(f);
+      thumbs.appendChild(img);
+    });
+
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f, f.name));
+    try {
+      const res = await fetch(`/api/pair/${code}/upload`, { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "上传失败");
+      pending = [];
+      thumbs.innerHTML = "";
+      done.classList.add("show");
+      setTimeout(() => done.classList.remove("show"), 4000);
+    } catch (e) {
+      alert(e.message || "上传失败，请重试");
+    }
+  });
+</script>
+</body>
+</html>
