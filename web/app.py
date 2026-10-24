@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 
 import cv2
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from pipeline import process_image, to_a4
@@ -74,10 +74,8 @@ JOB_TTL_SECONDS = int(os.environ.get("SCAN_JOB_TTL", "21600"))
 REAP_INTERVAL = int(os.environ.get("SCAN_REAP_INTERVAL", "300"))
 CLEAN_ON_EXIT = _truthy(os.environ.get("SCAN_CLEAN_ON_EXIT", "true"))
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
-PAIR_CODE_RE = re.compile(r"^[0-9a-f]{8}$")
 
 INDEX_HTML = (APP_DIR / "templates" / "index.html").read_text(encoding="utf-8")
-MOBILE_HTML = (APP_DIR / "templates" / "mobile.html").read_text(encoding="utf-8")
 
 
 def _job_dirs() -> List[Path]:
@@ -490,103 +488,6 @@ def pdf_to_scan(pdf: UploadFile = File(...)):
     finally:
         if not done:
             _drop_job_dir(job_dir)
-
-
-# ---------- 扫码配对上传 ----------
-# 桌面页请求一个配对码；手机扫码打开极简上传页，照片先落到内存里的配对槽，
-# 桌面页轮询取走。槽 10 分钟过期，取走即销毁——不经任何云端。
-
-import io as _io
-import secrets as _secrets
-
-PAIR_TTL = 600  # seconds
-_pairs: dict = {}  # code -> {"files": [(name, bytes)], "created": float}
-
-
-def _pair_gc():
-    now = time.time()
-    for k in [k for k, v in _pairs.items() if now - v["created"] > PAIR_TTL]:
-        _pairs.pop(k, None)
-
-
-@app.get("/api/pair/new")
-async def pair_new(host: str = ""):
-    """Create a pairing slot, return the code + a QR PNG encoding the mobile
-    upload URL. `host` lets the desktop page pass its own address so the QR
-    works from any interface (LAN IP, tunnel hostname...)."""
-    _pair_gc()
-    code = _secrets.token_hex(4)
-    _pairs[code] = {"files": [], "created": time.time(), "url": ""}
-    base = host.rstrip("/") or f"http://127.0.0.1:{int(os.environ.get('SCAN_PORT', '8765'))}"
-    # http scheme default; the desktop page passes e.g. http://192.168.1.5:8765
-    url = f"{base}/m/{code}"
-    _pairs[code]["url"] = url
-    return JSONResponse({"code": code, "url": url, "qr_png": f"/api/pair/{code}/qr.png"})
-
-
-@app.get("/api/pair/{code}/qr.png")
-async def pair_qr(code: str):
-    import qrcode
-
-    slot = _pairs.get(code)
-    if not slot:
-        return JSONResponse({"error": "配对码不存在或已过期"}, status_code=404)
-    # Encode the absolute URL the desktop page registered for this slot.
-    img = qrcode.make(slot.get("url") or f"/m/{code}", box_size=8, border=2)
-    buf = _io.BytesIO()
-    img.save(buf, format="PNG")
-    return Response(buf.getvalue(), media_type="image/png")
-
-
-@app.get("/m/{code}", response_class=HTMLResponse)
-async def mobile_upload_page(code: str):
-    """Minimal phone-facing upload page. The server injects the absolute /m/
-    path so the phone posts back to the same host it came from (LAN or tunnel
-    — whatever the QR encoded)."""
-    if not PAIR_CODE_RE.match(code) or code not in _pairs:
-        return HTMLResponse("<meta charset=utf-8><body style='font-family:sans-serif;text-align:center;padding:40px'>配对码不存在或已过期，请在电脑上重新生成。</body>", status_code=404)
-    return MOBILE_HTML
-
-
-@app.post("/api/pair/{code}/upload")
-async def pair_upload(code: str, files: List[UploadFile] = File(...)):
-    """Phone posts photos here; they wait in the slot for the desktop to poll."""
-    _pair_gc()
-    slot = _pairs.get(code)
-    if not slot:
-        return JSONResponse({"error": "配对码不存在或已过期"}, status_code=404)
-    added = 0
-    for uf in files[:10]:
-        content = await uf.read(MAX_UPLOAD_BYTES + 1)
-        if len(content) > MAX_UPLOAD_BYTES:
-            continue
-        slot["files"].append((Path(uf.filename or "photo.jpg").name, content))
-        added += 1
-    return {"added": added}
-
-
-@app.get("/api/pair/{code}/poll")
-async def pair_poll(code: str, consume: bool = True):
-    """Desktop poll: returns files waiting in the slot and consumes them, so a
-    photo lands on the desktop exactly once. An empty slot is "still waiting",
-    not expired — expiry is purely TTL-based."""
-    _pair_gc()
-    slot = _pairs.get(code)
-    if slot is None:
-        return {"files": [], "expired": True}
-    out = []
-    for name, content in slot["files"]:
-        img = decode(content)
-        if img is None:
-            continue
-        ok, jpg = cv2.imencode(".jpg", img)
-        out.append({"name": name, "data": jpg.tobytes().hex()})
-    if out and consume:
-        _pairs.pop(code, None)
-        return {"files": out, "count": len(out)}
-    # Drop undecodable entries but keep waiting.
-    slot["files"] = [f for f in slot["files"] if decode(f[1]) is not None]
-    return {"files": [], "count": 0}
 
 
 @app.get("/outputs/{job_id}/{filename}")

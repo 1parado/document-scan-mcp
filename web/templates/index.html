@@ -304,49 +304,6 @@
       opacity: 1;
     }
 
-    /* ---------- 手机扫码上传浮层 ---------- */
-    .qr-overlay {
-      position: fixed;
-      inset: 0;
-      z-index: 55;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      background: rgba(23, 27, 25, .92);
-      backdrop-filter: blur(3px);
-    }
-    .qr-overlay.show { display: flex; }
-    .qr-card {
-      background: var(--surface);
-      border-radius: 14px;
-      padding: 24px;
-      width: min(88vw, 320px);
-      text-align: center;
-    }
-    .qr-card h3 { font-size: .95rem; font-weight: 600; margin-bottom: 4px; }
-    .qr-card .sub { color: var(--muted); font-size: .78rem; margin-bottom: 14px; }
-    .qr-card img {
-      width: 200px; height: 200px;
-      image-rendering: pixelated;
-      border: 1px solid var(--hairline);
-      border-radius: 10px;
-      background: #fff;
-    }
-    .qr-card .waiting {
-      margin-top: 12px;
-      font-family: var(--mono);
-      font-size: .72rem;
-      color: var(--muted);
-    }
-    .qr-card .waiting.ok { color: var(--accent); font-weight: 600; }
-    .qr-close {
-      margin-top: 14px;
-      border: none; background: none;
-      color: var(--muted); font-size: .82rem;
-      cursor: pointer; font-family: inherit;
-    }
-    .qr-close:hover { color: var(--text); }
-
     /* ---------- 手动裁剪浮层 ---------- */
     .crop-overlay {
       position: fixed;
@@ -781,14 +738,6 @@
         <h1>Document Scan</h1>
         <p>100% 本地处理 · 文件不上传云端</p>
       </div>
-      <button type="button" class="settings-btn" id="btnQr" aria-label="手机扫码上传" title="手机扫码上传">
-        <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-          <rect x="2" y="2" width="5.5" height="5.5" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
-          <rect x="10.5" y="2" width="5.5" height="5.5" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
-          <rect x="2" y="10.5" width="5.5" height="5.5" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M10.5 10.5h2.2v2.2h-2.2z M13.8 10.5H16v2.2h-2.2z M10.5 13.8h2.2V16h-2.2z M13.8 13.8H16V16h-2.2z" fill="currentColor"/>
-        </svg>
-      </button>
       <button type="button" class="settings-btn" id="btnSettings" aria-expanded="false" aria-label="展示更多" title="展示更多">
         <svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
           <path d="M2.5 5.5h13M2.5 12.5h13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -893,16 +842,6 @@
         <button class="btn btn-ghost" id="btnAgain">继续扫描</button>
       </div>
       <iframe class="pdf-view" id="pdfView" title="PDF 预览" hidden></iframe>
-    </div>
-  </div>
-
-  <div class="qr-overlay" id="qrOverlay">
-    <div class="qr-card">
-      <h3>手机扫码上传</h3>
-      <p class="sub">手机扫这个二维码，照片直接进这里</p>
-      <img id="qrImg" alt="配对二维码" />
-      <div class="waiting" id="qrWaiting">等待手机上传…</div>
-      <button type="button" class="qr-close" id="qrClose">关闭</button>
     </div>
   </div>
 
@@ -1168,67 +1107,6 @@
       syncState();
       return added;
     }
-
-    /* ---------- 手机扫码上传 ---------- */
-    /* 桌面页生成配对码并轮询配对槽；手机扫码打开 /m/<code> 上传，照片即进
-       当前列表。槽 10 分钟过期。 */
-
-    const qrOverlay = document.getElementById("qrOverlay");
-    const qrImg = document.getElementById("qrImg");
-    const qrWaiting = document.getElementById("qrWaiting");
-    let qrPollTimer = 0;
-
-    btnQr.addEventListener("click", async () => {
-      qrOverlay.classList.add("show");
-      qrWaiting.textContent = "生成二维码…";
-      qrWaiting.className = "waiting";
-      try {
-        // 二维码编同一主机地址：桌面从哪个地址打开，手机就能回连哪个地址
-        //（局域网 IP、tunnel 域名都自然工作）。
-        const res = await fetch(`/api/pair/new?host=${encodeURIComponent(location.origin)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "生成失败");
-        qrImg.src = data.qr_png;
-        qrWaiting.textContent = "等待手机上传…";
-        pollPair(data.code);
-      } catch (e) {
-        qrWaiting.textContent = "生成失败：" + e.message;
-      }
-    });
-
-    function pollPair(code) {
-      clearTimeout(qrPollTimer);
-      qrPollTimer = setTimeout(async () => {
-        if (!qrOverlay.classList.contains("show")) return;
-        try {
-          const res = await fetch(`/api/pair/${code}/poll`);
-          const data = await res.json();
-          if (data.files?.length) {
-            // hex → bytes → File，走普通 addFiles（预览/互斥等一切不变）。
-            const files = data.files.map((f) => new File(
-              [Uint8Array.from(f.data.match(/../g).map((h) => parseInt(h, 16)))],
-              f.name || "photo.jpg", { type: "image/jpeg" }
-            ));
-            addFiles(files);
-            qrWaiting.textContent = `已接收 ${data.count} 张 ✓`;
-            qrWaiting.className = "waiting ok";
-            qrOverlay.classList.remove("show");
-            clearTimeout(qrPollTimer);
-            return;
-          }
-          if (data.expired) {
-            qrWaiting.textContent = "配对码已过期，点击按钮重新生成";
-            return;
-          }
-        } catch {}
-        pollPair(code);
-      }, 1500);
-    }
-
-    document.getElementById("qrClose").addEventListener("click", () => {
-      qrOverlay.classList.remove("show");
-      clearTimeout(qrPollTimer);
-    });
 
     /* ---------- 手动裁剪框 ---------- */
     /* 图片项记录手动四角（原图像素坐标，TL/TR/BR/BL）；重扫时随文件发送。 */
